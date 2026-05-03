@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.python-version
+*.egg-info/
+
+# 가상환경
+.venv/
+venv/
+env/
+
+# 환경변수 (절대 커밋 금지)
+.env
+.env.local
+
+# 사용자 데이터 / 색인 결과 (구조만 유지하고 내용은 커밋하지 않음)
+data/raw/**/*
+!data/raw/**/.gitkeep
+data/processed/**/*
+!data/processed/**/.gitkeep
+data/sample/**/*
+!data/sample/.gitkeep
+!data/sample/README.md
+
+storage/chroma_db/**/*
+!storage/chroma_db/.gitkeep
+storage/qa_logs/**/*
+!storage/qa_logs/.gitkeep
+storage/registry/**/*
+!storage/registry/.gitkeep
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# pytest / mypy
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/

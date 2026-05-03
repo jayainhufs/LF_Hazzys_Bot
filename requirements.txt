@@ -1,0 +1,39 @@
+# ============================================================================
+# Work RAG Assistant - Python 의존성
+#  - Python 3.11 권장
+#  - sentence-transformers / chromadb 는 첫 설치 시 시간이 걸릴 수 있음
+# ============================================================================
+
+# Web UI
+streamlit>=1.36
+
+# Vector DB
+chromadb>=0.5.0
+
+# Google Gemini SDK
+google-genai>=0.3.0
+
+# 로컬 임베딩 (선택형)
+sentence-transformers>=2.7.0
+
+# 문서 파서
+pandas>=2.2.0
+openpyxl>=3.1.2
+python-docx>=1.1.0
+markdown>=3.6
+
+# 환경/유틸
+python-dotenv>=1.0.1
+tqdm>=4.66.0
+requests>=2.32.0
+beautifulsoup4>=4.12.3
+
+# 수치/유사도
+numpy>=1.26.0
+scikit-learn>=1.4.0
+
+# Streamlit 파일 변경 감지 안정화
+watchdog>=4.0.0
+
+# 개발/테스트 (선택)
+pytest>=8.2.0
