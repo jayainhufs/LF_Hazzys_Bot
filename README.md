@@ -361,6 +361,45 @@ scripts\run_app.bat
 **4_검색_테스트** 페이지에서 질문을 입력하면 LLM 호출 없이 retrieval 결과만 확인할 수 있다.
 임베딩 모델을 바꿔가며 동일 질문의 검색 품질을 비교하기 좋다.
 
+페이지에서 다음 진단 정보를 확인할 수 있다.
+
+- candidate / passed / dropped 카운트
+- 각 chunk 의 `score`, `final_score`, `source_weight`, `category_boost`, `content_type_boost`
+- `passed_threshold` 통과 여부 및 `filter_reason` (similarity 미달 / final_score 미달 / 파일 cap 초과)
+- score 해석: `score = 1 - cosine_distance` (값이 높을수록 유사)
+- 슬라이더로 즉석에서 `MIN_SIMILARITY_SCORE`, `MIN_FINAL_SCORE`, `MAX_CHUNKS_PER_FILE`, `USE_MMR` 조정
+
+---
+
+## 17.1 검색 결과가 너무 넓게 나올 때 조정하는 방법
+
+검색 테스트에서 관련 단어 하나만 일치해도 chunk 가 줄줄이 딸려 오는 경우, 아래 환경변수로 조정할 수 있다.
+모든 값은 `.env` 또는 검색 테스트 페이지의 슬라이더에서 즉시 변경 가능하다.
+
+| 환경변수 | 효과 |
+| --- | --- |
+| `TOP_K` | 가져올 최종 근거 수. 낮추면 답변에 들어가는 근거가 줄어든다. |
+| `MIN_SIMILARITY_SCORE` | raw similarity (`1 - cosine_distance`) 임계값. 높이면 약한 관련 chunk 가 제거된다. |
+| `MIN_FINAL_SCORE` | source_weight / category_boost / content_type_boost 까지 반영한 최종 점수 임계값. 높이면 근거 품질이 올라가지만 결과가 0이 될 수 있다. |
+| `MIN_RETRIEVED_CHUNKS` | 통과 chunk 가 이 값 미만이면 Gemini Generation 을 호출하지 않고 "근거 부족" 안내를 반환한다. |
+| `MAX_CHUNKS_PER_FILE` | 같은 파일에서 너무 많은 chunk 가 들어오는 것을 막는다. 1~2 로 두면 한 문서가 결과를 독점하지 않는다. |
+| `USE_MMR` | `true` 면 비슷한 chunk 반복을 줄이는 다양성 보정을 적용한다. |
+| `MMR_LAMBDA` | 관련성(λ)과 다양성(1-λ) 사이의 비율. 0.7 이면 관련성 70% / 다양성 30%. |
+
+추가 정책:
+
+- **Slack 대화** 는 히스토리/실무 맥락 참고용으로 가중치를 낮게(`source_weight=0.8`) 둔다.
+- **Guide 문서** 는 공식 절차 근거로 가중치를 높게(`source_weight=1.0`) 둔다.
+- "정산", "세금계산서", "인보이스", "SF", "모비사인", "입금", "광고주 공유용" 같은 키워드가 질문에 들어 있으면
+  Guide 자료가 우선 검색되도록 카테고리 부스트가 자동 보정된다.
+- "오늘", "어제", "TODO", "보미님", "스레드", "말씀", "피드백" 같은 키워드가 질문에 들어 있으면
+  Slack thread 자료의 부스트가 자동으로 강화된다.
+- "ASC", "BAU", "메타", "캠페인 세팅", "컨첵시트", "토글" 같은 키워드는 Slack + Guide 둘 다 우대한다.
+- "카카오톡 / 카카오메시지 / 발송" 키워드는 Slack 을 강하게, Guide / Kakao 자료도 보조로 우대한다.
+- 카카오톡 자료는 잡음이 많아 기본 가중치가 낮다 (`source_weight=0.45`).
+- **근거가 부족하면 Gemini Generation 을 호출하지 않으므로 비용을 절감**할 수 있다.
+  (3_업무_QA 페이지에서 "근거 부족" 안내 메시지가 답변 자리에 표시된다.)
+
 ---
 
 ## 18. 자주 발생하는 오류와 해결 방법

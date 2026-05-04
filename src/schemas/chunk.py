@@ -46,6 +46,9 @@ class RetrievedChunk:
     parent_chunk_id: Optional[str] = None
     section_title: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    # ----- 검색 진단용 (retriever 가 채워준다) -----
+    passed_threshold: bool = True
+    filter_reason: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

@@ -244,7 +244,15 @@ def main() -> int:
             print("  (chromadb 미설치 -> skip)")
             return
         from src.storage.vector_store import VectorStore
-        with tempfile.TemporaryDirectory() as td:
+        # Windows 의 ChromaDB 는 SQLite 파일 핸들을 잡고 있어
+        # tempfile 자동 cleanup 시 PermissionError(WinError 32) 가 자주 발생한다.
+        # 기능 문제는 아니므로 ignore_cleanup_errors 로 WARN 처리한다.
+        try:
+            tmp_kwargs = {"ignore_cleanup_errors": True}  # py3.10+
+            ctx = tempfile.TemporaryDirectory(**tmp_kwargs)
+        except TypeError:
+            ctx = tempfile.TemporaryDirectory()
+        with ctx as td:
             vs = VectorStore(persist_dir=Path(td), collection_name="smoke_test")
             stats = vs.stats()
             assert stats["count"] >= 0

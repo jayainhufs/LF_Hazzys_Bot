@@ -61,6 +61,16 @@ def _env_int(key: str, default: int) -> int:
         return default
 
 
+def _env_float(key: str, default: float) -> float:
+    raw = _env(key)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
 def _resolve_path(raw_path: str) -> Path:
     """문자열 경로를 받아 절대 경로 Path 로 정규화."""
     p = Path(raw_path)
@@ -108,15 +118,22 @@ class Settings:
     local_embedding_model: str = "BAAI/bge-m3"
 
     # ----- RAG -----
-    top_k: int = 8
+    top_k: int = 5
     chunk_size: int = 1200
     chunk_overlap: int = 200
     enable_query_rewrite: bool = False
     enable_excel_summary: bool = False
-    max_context_chars: int = 12000
-    max_chunks_per_file: int = 3
+    max_context_chars: int = 6000
+    max_chunks_per_file: int = 2
     request_timeout_seconds: int = 60
     chroma_collection: str = "work_knowledge"
+
+    # ----- 검색 정밀도 (Retrieval precision) -----
+    min_similarity_score: float = 0.35
+    min_final_score: float = 0.30
+    min_retrieved_chunks: int = 1
+    use_mmr: bool = True
+    mmr_lambda: float = 0.7
 
     # ----- 카테고리 → raw 폴더 -----
     category_dirs: dict = field(default_factory=lambda: {
@@ -128,17 +145,25 @@ class Settings:
     })
 
     # ----- 카테고리 → source_weight 기본값 -----
+    # 검색 결과 precision 강화를 위해 source_type 별 가중치를 분리.
+    #   guide                 : 절차/공식 문서 → 1.0
+    #   excel_summary         : 한국어 업무 요약 (검색 1차 대상) → 1.1
+    #   excel_raw_table       : 숫자 근거용 → 0.95
+    #   slack_manual          : 실무 맥락/히스토리 보강 → 0.8 (guide 보다 낮음)
+    #   word/markdown/txt     : 일반 문서 → 0.75/0.7/0.65
+    #   kakao                 : 잡음이 많음 → 0.45
+    #   misc                  : 기본 → 0.5
     category_source_weight: dict = field(default_factory=lambda: {
         "excel_summary": 1.1,
-        "excel_raw_table": 1.0,
+        "excel_raw_table": 0.95,
         "excel": 1.0,
-        "guide": 0.9,
-        "slack_manual": 0.85,
-        "slack": 0.85,
+        "guide": 1.0,
+        "slack_manual": 0.8,
+        "slack": 0.8,
         "word": 0.75,
         "markdown": 0.7,
-        "txt": 0.6,
-        "kakao": 0.5,
+        "txt": 0.65,
+        "kakao": 0.45,
         "misc": 0.5,
     })
 
@@ -193,6 +218,13 @@ class Settings:
         s.max_chunks_per_file = _env_int("MAX_CHUNKS_PER_FILE", s.max_chunks_per_file)
         s.request_timeout_seconds = _env_int("REQUEST_TIMEOUT_SECONDS", s.request_timeout_seconds)
         s.chroma_collection = _env("CHROMA_COLLECTION", s.chroma_collection) or s.chroma_collection
+
+        # 검색 정밀도
+        s.min_similarity_score = _env_float("MIN_SIMILARITY_SCORE", s.min_similarity_score)
+        s.min_final_score = _env_float("MIN_FINAL_SCORE", s.min_final_score)
+        s.min_retrieved_chunks = _env_int("MIN_RETRIEVED_CHUNKS", s.min_retrieved_chunks)
+        s.use_mmr = _env_bool("USE_MMR", s.use_mmr)
+        s.mmr_lambda = _env_float("MMR_LAMBDA", s.mmr_lambda)
 
         return s
 
