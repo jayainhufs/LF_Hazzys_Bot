@@ -135,6 +135,26 @@ class Settings:
     use_mmr: bool = True
     mmr_lambda: float = 0.7
 
+    # ----- Date / Topic-aware retrieval -----
+    date_exact_match_boost: float = 1.25
+    date_mismatch_penalty: float = 0.55
+    enable_date_filter: bool = False
+    topic_match_boost: float = 1.20
+    topic_mismatch_penalty: float = 0.80
+
+    # ----- 출력 비식별화 (Anonymization) -----
+    # 원본 raw 문서는 절대 변경하지 않는다. UI/QA 답변/prompt context 출력에만 적용.
+    anonymize_output: bool = True
+    show_raw_content: bool = False
+    show_speaker_names: bool = False
+    show_exact_timestamps: bool = False
+    show_exact_dates: bool = False
+    mask_mentions: bool = True
+    mask_links: bool = True
+    mask_file_names: bool = False
+    anonymized_date_label: str = "업무일"
+    anonymized_time_label: str = "시간대"
+
     # ----- 카테고리 → raw 폴더 -----
     category_dirs: dict = field(default_factory=lambda: {
         "slack": "slack_manual",
@@ -225,6 +245,29 @@ class Settings:
         s.min_retrieved_chunks = _env_int("MIN_RETRIEVED_CHUNKS", s.min_retrieved_chunks)
         s.use_mmr = _env_bool("USE_MMR", s.use_mmr)
         s.mmr_lambda = _env_float("MMR_LAMBDA", s.mmr_lambda)
+
+        # Date / Topic-aware retrieval
+        s.date_exact_match_boost = _env_float("DATE_EXACT_MATCH_BOOST", s.date_exact_match_boost)
+        s.date_mismatch_penalty = _env_float("DATE_MISMATCH_PENALTY", s.date_mismatch_penalty)
+        s.enable_date_filter = _env_bool("ENABLE_DATE_FILTER", s.enable_date_filter)
+        s.topic_match_boost = _env_float("TOPIC_MATCH_BOOST", s.topic_match_boost)
+        s.topic_mismatch_penalty = _env_float("TOPIC_MISMATCH_PENALTY", s.topic_mismatch_penalty)
+
+        # Anonymization
+        s.anonymize_output = _env_bool("ANONYMIZE_OUTPUT", s.anonymize_output)
+        s.show_raw_content = _env_bool("SHOW_RAW_CONTENT", s.show_raw_content)
+        s.show_speaker_names = _env_bool("SHOW_SPEAKER_NAMES", s.show_speaker_names)
+        s.show_exact_timestamps = _env_bool("SHOW_EXACT_TIMESTAMPS", s.show_exact_timestamps)
+        s.show_exact_dates = _env_bool("SHOW_EXACT_DATES", s.show_exact_dates)
+        s.mask_mentions = _env_bool("MASK_MENTIONS", s.mask_mentions)
+        s.mask_links = _env_bool("MASK_LINKS", s.mask_links)
+        s.mask_file_names = _env_bool("MASK_FILE_NAMES", s.mask_file_names)
+        s.anonymized_date_label = (
+            _env("ANONYMIZED_DATE_LABEL", s.anonymized_date_label) or s.anonymized_date_label
+        )
+        s.anonymized_time_label = (
+            _env("ANONYMIZED_TIME_LABEL", s.anonymized_time_label) or s.anonymized_time_label
+        )
 
         return s
 

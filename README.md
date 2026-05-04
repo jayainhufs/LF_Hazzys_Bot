@@ -402,6 +402,94 @@ scripts\run_app.bat
 
 ---
 
+## 17.2 Slack TODO 검색 품질과 비식별화 출력
+
+Slack 복붙 자료(`uploaded_category=slack`)는 그대로 임베딩하면 다음과 같은 문제가 발생한다.
+
+- 하루치 대화가 통째로 한 chunk(`fallback_block`) 가 되어 BAU/ASC, 카카오 발송, DR 확인,
+  메타 세팅, TODO 가 한 덩어리로 섞이고, 다른 날짜 질문에도 잘못 끌려 나온다.
+- 사람 이름, @멘션, "오전 10:02" 같은 정확한 시간이 검색 결과/QA 답변에 그대로 노출된다.
+
+이를 줄이기 위해 다음 기능을 제공한다.
+
+### Slack parser v2 (구조화)
+
+다음 패턴을 인식해 발화자 단위 message 와 "TODO 섹션" 단위로 잘라서 적재한다.
+
+- `이동제[마케팅4팀]  [오전 10:02]` 형태의 헤더 + 다음 줄 본문
+- `[오전 10:57] @김보미[마케팅4팀] ...` 같은 시간+멘션 한 줄 메시지
+- `[2026년 4월 29일 TODO]` 제목, `4/29 동제 오전/중간/퇴근! TODO`, `동제 명일 TODO`,
+  `내일 동제쓰 TODO` 같은 섹션 헤더
+- `셋팅 내용`, `크첵 해주실 내용`, `1. 4월 ASC 캠페인 ... 원인 분석` 같은 sub-section
+
+각 섹션의 metadata 에는 다음이 채워진다.
+
+- `document_date` (예: `2026-04-29`), `date_text`, `date_source`
+- `todo_phase` (`initial` / `morning` / `mid` / `end_of_day` / `tomorrow` / `unknown`)
+- `topic_tags` (예: `["meta", "kakao"]`), `primary_topic`
+- `original_speakers`, `speaker_roles`, `display_speakers` (이름 → "작성자/검토자/담당자 A")
+- `time_buckets`, `time_range_display` (예: `"오전 · 오후"`)
+- `parser_format` (`structured_slack_messages` / `slack_todo_sections` / `fallback_block`)
+- `sanitized_content` — UI / QA 답변에 표시할 비식별화 본문
+
+### 날짜 / 주제 인식 검색 (date / topic-aware retrieval)
+
+질문에서 다음을 자동 추출한다.
+
+- `query_date` — `4월 29일`, `4/29`, `2026-04-29` 형태 모두 인식
+- `query_topics` — `메타`, `카카오`, `정산`, `옥외`, `리포트`, `NBT`, `그린피`, `유튜브` 등
+- `query_intent` — `procedure` / `todo_lookup` / `explanation` / `issue_lookup`
+
+이를 기반으로 final_score 에 다음이 곱해진다.
+
+| 환경변수 | 효과 |
+| --- | --- |
+| `DATE_EXACT_MATCH_BOOST` (1.25) | 질문 날짜 == chunk.document_date 일 때 강한 가중치 |
+| `DATE_MISMATCH_PENALTY` (0.55) | 질문 날짜와 다른 날짜 chunk 에 강한 페널티 |
+| `ENABLE_DATE_FILTER` (false) | true 면 다른 날짜 chunk 자체를 검색 결과에서 제거 |
+| `TOPIC_MATCH_BOOST` (1.20) | query_topics 와 chunk.topic_tags 가 1개라도 겹치면 가중치 |
+| `TOPIC_MISMATCH_PENALTY` (0.80) | 둘 다 있는데 안 겹치면 페널티 (guide+procedure 조합은 약하게만) |
+
+### 비식별화 출력 (anonymization)
+
+UI 검색 결과 / QA 답변 / prompt context 에서는 기본적으로 `sanitized_content` 를 사용한다.
+원본 raw 문서는 `data/raw/...` 에 그대로 남아있고 변경되지 않는다.
+
+| 환경변수 | 기본값 | 설명 |
+| --- | --- | --- |
+| `ANONYMIZE_OUTPUT` | `true` | UI/QA 답변/prompt 에 sanitized 본문을 우선 사용 |
+| `SHOW_RAW_CONTENT` | `false` | true 면 원문도 expander 로 보여줌(디버깅용) |
+| `SHOW_SPEAKER_NAMES` | `false` | true 면 "이동제[마케팅4팀]" 같은 실명 그대로 노출 |
+| `SHOW_EXACT_TIMESTAMPS` | `false` | true 면 "오전 10:02" 같은 정확한 시간 그대로 노출 |
+| `SHOW_EXACT_DATES` | `false` | true 면 "2026년 4월 29일" 같은 원본 날짜 그대로 노출 |
+| `MASK_MENTIONS` | `true` | "@김보미[마케팅4팀]" → "@담당자" 치환 |
+| `MASK_LINKS` | `true` | URL/드라이브 링크 → "[링크]" / "[이미지]" / "[파일]" |
+| `MASK_FILE_NAMES` | `false` | (확장 여지) 파일명에 실명이 들어 있을 때 활성화 |
+| `ANONYMIZED_DATE_LABEL` | `업무일` | "해당 업무일" 식 라벨 |
+| `ANONYMIZED_TIME_LABEL` | `시간대` | "[시간대]" 식 라벨 |
+
+### 권장 운영 셋팅
+
+- 파일명에 날짜를 넣어 적재하면 검색 품질이 올라간다.  
+  예: `[2026년 4월 29일 TODO].txt`, `[2026년 4월 30일 TODO].txt`
+- TODO 섹션 제목(`4/29 오전 TODO`, `4/29 중간 TODO`, `4/29 퇴근 TODO`, `명일 TODO`)을 유지하면
+  parser v2 가 phase 단위로 chunk 를 나눠 노이즈가 줄어든다.
+- 결과가 다른 날짜 문서까지 끌고 오면 검색 테스트 페이지에서 `ENABLE_DATE_FILTER`
+  체크박스로 즉시 검증할 수 있다.
+- 팀 내 공유용으로 사용할 때는 다음 셋팅을 권장한다.
+
+```env
+ANONYMIZE_OUTPUT=true
+SHOW_RAW_CONTENT=false
+SHOW_SPEAKER_NAMES=false
+SHOW_EXACT_TIMESTAMPS=false
+SHOW_EXACT_DATES=false
+MASK_MENTIONS=true
+MASK_LINKS=true
+```
+
+---
+
 ## 18. 자주 발생하는 오류와 해결 방법
 
 | 증상 | 원인 | 해결 |

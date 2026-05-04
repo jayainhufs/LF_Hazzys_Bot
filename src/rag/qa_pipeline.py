@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 
 from src.config import settings
 from src.logger import get_logger
+from src.preprocessing.anonymizer import anonymize_text
 from src.rag.embedder import Embedder, get_default_embedder
 from src.rag.generator import Generator
 from src.rag.prompt_builder import build_qa_prompt
@@ -127,6 +128,14 @@ class QAPipeline:
             answer, used_model = self.generator.generate(prompt)
 
         # 6) log
+        def _preview_for(c: RetrievedChunk) -> str:
+            md = c.metadata or {}
+            if settings.anonymize_output:
+                src = md.get("sanitized_content") or anonymize_text(c.content or "")
+            else:
+                src = c.content or ""
+            return src[:600]
+
         log_obj = QALog(
             question=q,
             rewritten_query=rewritten,
@@ -144,7 +153,8 @@ class QAPipeline:
                     "final_score": c.final_score,
                     "passed_threshold": c.passed_threshold,
                     "filter_reason": c.filter_reason,
-                    "preview": (c.content or "")[:600],
+                    # 비식별화된 preview 만 로그에 남긴다 (원문은 raw 파일에 그대로 보존됨)
+                    "preview": _preview_for(c),
                     "metadata": c.metadata,
                 }
                 for c in (used_chunks or passed or candidates)
@@ -169,6 +179,11 @@ class QAPipeline:
                 "prompt_chars": prompt_chars,
                 "used_chunks": len(used_chunks),
                 "query_class": summary.get("query_class"),
+                "query_date": summary.get("query_date"),
+                "query_topics": summary.get("query_topics"),
+                "query_intent": summary.get("query_intent"),
+                "enable_date_filter": summary.get("enable_date_filter"),
+                "anonymize_output": summary.get("anonymize_output"),
             },
         )
         if save_log:

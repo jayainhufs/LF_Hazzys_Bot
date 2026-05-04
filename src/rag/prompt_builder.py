@@ -24,6 +24,7 @@ from __future__ import annotations
 from typing import Iterable, List, Tuple
 
 from src.config import settings
+from src.preprocessing.anonymizer import anonymize_text
 from src.schemas import RetrievedChunk
 from src.utils.token_utils import (
     cap_chunks_per_file,
@@ -40,8 +41,11 @@ SYSTEM_INSTRUCTION = (
     "TODO/당일 업무 흐름/스레드 피드백 관련 질문은 Slack thread 근거를 우선 인용하라. "
     "업무 초보자가 바로 따라할 수 있도록 단계별로 자세히 설명한다. "
     "광고대행사 퍼포먼스마케팅 맥락(캠페인 세팅, 소재 검수, KPI/ROAS, 보고서 등) 을 우선 고려한다. "
-    "답변 마지막에는 반드시 참고한 근거의 file_name, uploaded_category, source_type, "
-    "section_title, chunk_index, final_score 를 모두 표기한다."
+    "제공된 근거에는 비식별화된 업무 내용이 포함되어 있다. "
+    "사람 실명/멘션/정확한 시간/정확한 날짜를 답변에 그대로 옮기지 말고, "
+    "역할 기반 표현(작성자, 검토자, 담당자) 과 시간대/업무일 라벨로 표현하라. "
+    "답변 마지막 참고근거에는 file_name, uploaded_category, source_type, section_title, "
+    "display_date, primary_topic, chunk_index, final_score 를 표기하되 사람 실명과 정확한 시간은 제외한다."
 )
 
 ANSWER_FORMAT = """반드시 아래 7가지 섹션 형식을 모두 갖춰서 한국어로 답변하라.
@@ -70,7 +74,8 @@ ANSWER_FORMAT = """반드시 아래 7가지 섹션 형식을 모두 갖춰서 �
 
 ## 6. 참고 근거
 - 아래 형식으로 모든 인용 근거를 표기:
-  - `file_name=... · uploaded_category=... · source_type=... · section_title=... · chunk_index=... · final_score=...`
+  - `file_name=... · uploaded_category=... · source_type=... · section_title=... · display_date=... · primary_topic=... · chunk_index=... · final_score=...`
+- 사람 실명/정확한 시간/원본 날짜는 적지 말 것 (display_date 라벨만 표기)
 - 가능한 한 답변에서 활용한 모든 근거 chunk 를 명시
 
 ## 7. 불확실한 부분
@@ -85,7 +90,26 @@ PRINCIPLES = """## 답변 원칙 (반드시 준수)
 4. 정산/세금계산서/SF/모비사인/인보이스/입금/광고주 공유용 정산 시트 관련 질문은 guide 근거 우선.
 5. TODO/당일 업무 흐름/오늘의 스레드/피드백 관련 질문은 Slack thread 근거 우선.
 6. 메타 캠페인 세팅/ASC/BAU/컨첵시트/토글 관련 질문은 slack 과 guide 근거 모두 활용 가능.
-7. 답변 마지막에는 활용한 모든 근거를 정확히 표시할 것 (6번 섹션)."""
+7. 답변 마지막에는 활용한 모든 근거를 정확히 표시할 것 (6번 섹션).
+8. 제공된 근거 텍스트에는 비식별화된 업무 내용이 포함되어 있다. 답변에는 사람 실명,
+   @멘션, "오전 10:02" 같은 정확한 시간, "2026년 4월 29일" 같은 정확한 날짜를
+   그대로 옮기지 말 것. 대신 "작성자/검토자/담당자", "오전/오후/퇴근 전", "해당 업무일/
+   다음 업무일" 같은 라벨로 표현할 것.
+9. 사용자가 날짜를 명시적으로 묻더라도 답변에서는 가능한 "질문에서 언급한 업무일" 정도로
+   표현하고, 정확한 날짜를 반복해 적지 말 것 (display_date 라벨 사용)."""
+
+
+def _display_date_for(chunk: RetrievedChunk) -> str:
+    """anonymize_output 이 켜져 있으면 'YYYY-MM-DD' 대신 라벨을 반환."""
+    md = chunk.metadata or {}
+    doc_date = md.get("document_date")
+    if not doc_date:
+        return "-"
+    if settings.show_exact_dates:
+        return str(doc_date)
+    if settings.anonymize_output:
+        return f"해당 {settings.anonymized_date_label}"
+    return str(doc_date)
 
 
 def _format_chunk_block(idx: int, chunk: RetrievedChunk, max_chars_per_chunk: int) -> str:
@@ -94,8 +118,20 @@ def _format_chunk_block(idx: int, chunk: RetrievedChunk, max_chars_per_chunk: in
     src = chunk.source_type or "-"
     ctype = chunk.content_type or "-"
     file_name = chunk.file_name or "-"
-    chunk_index = chunk.metadata.get("chunk_index", "?")
-    body = truncate_to_chars(chunk.content or "", max_chars_per_chunk)
+    md = chunk.metadata or {}
+    chunk_index = md.get("chunk_index", "?")
+    primary_topic = md.get("primary_topic") or "-"
+    todo_phase = md.get("todo_phase") or "-"
+    parser_format = md.get("parser_format") or "-"
+    display_date = _display_date_for(chunk)
+
+    # body 는 sanitized_content 를 우선 사용 (anonymize_output=true).
+    if settings.anonymize_output:
+        body_src = md.get("sanitized_content") or anonymize_text(chunk.content or "")
+    else:
+        body_src = chunk.content or ""
+    body = truncate_to_chars(body_src, max_chars_per_chunk)
+
     return (
         f"[근거 #{idx}]\n"
         f"- file_name: {file_name}\n"
@@ -103,6 +139,10 @@ def _format_chunk_block(idx: int, chunk: RetrievedChunk, max_chars_per_chunk: in
         f"- source_type: {src}\n"
         f"- content_type: {ctype}\n"
         f"- section_title: {title}\n"
+        f"- display_date: {display_date}\n"
+        f"- primary_topic: {primary_topic}\n"
+        f"- todo_phase: {todo_phase}\n"
+        f"- parser_format: {parser_format}\n"
         f"- chunk_index: {chunk_index}\n"
         f"- final_score: {chunk.final_score:.4f}\n"
         f"---\n"
@@ -181,7 +221,8 @@ def build_qa_prompt(
         "위 형식을 그대로 따라 한국어로 답변하라. "
         "근거에 없는 내용은 추정하지 말고, 부족하면 7번 섹션에 명시하라. "
         "6번 섹션에 모든 인용 근거의 file_name, uploaded_category, source_type, "
-        "section_title, chunk_index, final_score 를 빠짐없이 표기하라."
+        "section_title, display_date, primary_topic, chunk_index, final_score 를 빠짐없이 표기하라. "
+        "사람 실명/멘션/정확한 시간/원본 날짜는 답변과 참고근거 모두에 적지 말 것."
     )
 
     return "\n".join(parts), used

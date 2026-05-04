@@ -6,11 +6,15 @@ ParsedSection 들을 RAG에 적합한 Chunk 로 변환한다.
 설계 원칙:
 - 너무 작게 쪼개지 않는다 (chunk_size 기본 1200자, overlap 200자).
 - chunk 앞에는 [파일명][카테고리][출처][시트/섹션][콘텐츠유형] 컨텍스트를 붙인다.
+  Slack TODO 처럼 풍부한 metadata 가 있으면 [문서날짜][TODO단계][업무주제][시간대]
+  도 함께 붙여 검색 친화도를 높인다.
 - 표/Excel 데이터는 행 단위가 깨지지 않게 자른다.
 - 대화 데이터는 라인 단위 묶음을 유지한다.
 - Excel summary chunk 는 잘게 쪼개지 않고 섹션 단위 그대로 유지한다.
 - chunk 마다 metadata 를 풍부하게 부여한다 (parent_chunk_id 포함).
 - source_weight 는 source_type 기준 기본값을 사용하되, content_type 으로 보정.
+- Slack parser v2 가 sanitized_content 를 채워주면 embedding_text 와
+  metadata.sanitized_content 양쪽에 그 값을 사용해 사람 이름/실시간이 임베딩되지 않게 한다.
 """
 from __future__ import annotations
 
@@ -18,6 +22,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from src.config import settings
 from src.logger import get_logger
+from src.preprocessing.anonymizer import anonymize_text
 from src.preprocessing.cleaner import clean_text
 from src.preprocessing.normalizer import normalize_for_embedding
 from src.schemas import Chunk, Document, ParsedSection
@@ -51,17 +56,39 @@ def build_context_header(
     source_type: str,
     section_title: Optional[str],
     content_type: str,
+    document_date: Optional[str] = None,
+    todo_phase: Optional[str] = None,
+    primary_topic: Optional[str] = None,
+    topic_tags: Optional[List[str]] = None,
+    time_range_display: Optional[str] = None,
 ) -> str:
-    """검색 친화적인 메타 prefix."""
+    """
+    검색 친화적인 메타 prefix.
+
+    기본 5개 라인은 그대로 유지(기존 테스트 호환).
+    추가 metadata (document_date / todo_phase / primary_topic / topic_tags / time_range)
+    가 있을 때만 라인을 덧붙여 임베딩에서 시간/주제 매칭이 잘 되도록 한다.
+    """
     section = section_title or "-"
-    return (
-        f"[파일명] {file_name}\n"
-        f"[카테고리] {uploaded_category}\n"
-        f"[출처] {source_type}\n"
-        f"[시트/섹션] {section}\n"
-        f"[콘텐츠유형] {content_type}\n"
-        f"[내용]\n"
-    )
+    parts = [
+        f"[파일명] {file_name}",
+        f"[카테고리] {uploaded_category}",
+        f"[출처] {source_type}",
+        f"[시트/섹션] {section}",
+        f"[콘텐츠유형] {content_type}",
+    ]
+    if document_date:
+        parts.append(f"[문서날짜] {document_date}")
+    if todo_phase and todo_phase != "unknown":
+        parts.append(f"[TODO단계] {todo_phase}")
+    if primary_topic:
+        parts.append(f"[업무주제] {primary_topic}")
+    if topic_tags:
+        parts.append(f"[topic_tags] {', '.join(topic_tags)}")
+    if time_range_display:
+        parts.append(f"[시간대] {time_range_display}")
+    parts.append("[내용]")
+    return "\n".join(parts) + "\n"
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +163,29 @@ def _hard_split(text: str, chunk_size: int, overlap: int) -> List[str]:
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def _slice_sanitized(
+    cleaned: str,  # noqa: ARG001 - 향후 정렬용
+    pieces: List[str],
+    section_sanitized: Optional[str],
+) -> List[Optional[str]]:
+    """
+    파서가 미리 만들어둔 섹션 단위 sanitized_content 를 chunk piece 단위로 매핑한다.
+    완벽한 1:1 매핑은 어렵기 때문에 다음 단순화 규칙을 쓴다.
+
+    - 섹션이 chunk 1개로 끝나면 그대로 사용
+    - 그 외에는 None 을 돌려주고, chunker 가 ``anonymize_text(piece)`` 로
+      piece 단위 sanitization 을 다시 수행
+    """
+    if not pieces:
+        return []
+    if section_sanitized and len(pieces) == 1:
+        return [section_sanitized.strip()]
+    return [None] * len(pieces)
+
+
+# ---------------------------------------------------------------------------
 # 메인 진입점
 # ---------------------------------------------------------------------------
 def chunk_sections(
@@ -167,16 +217,45 @@ def chunk_sections(
         else:
             pieces = _split_text_with_overlap(cleaned, cs, co, line_aware=True)
 
+        # Slack parser v2 가 채워준 sanitized_content (섹션 단위) 가 있으면
+        # 같은 길이로 잘라서 chunk 별 sanitized_content 를 만든다.
+        section_sanitized = (section.metadata or {}).get("sanitized_content")
+        sanitized_pieces: List[Optional[str]] = _slice_sanitized(
+            cleaned, pieces, section_sanitized
+        )
+
         for piece_idx, piece in enumerate(pieces):
+            section_meta = section.metadata or {}
+            doc_date = section_meta.get("document_date")
+            todo_phase = section_meta.get("todo_phase")
+            primary_topic = section_meta.get("primary_topic")
+            topic_tags = section_meta.get("topic_tags") or []
+            time_range_display = section_meta.get("time_range_display")
+
             header = build_context_header(
                 file_name=document.file_name,
                 uploaded_category=document.uploaded_category,
                 source_type=document.source_type,
                 section_title=section.section_title,
                 content_type=section.content_type,
+                document_date=doc_date,
+                todo_phase=todo_phase,
+                primary_topic=primary_topic,
+                topic_tags=topic_tags if isinstance(topic_tags, list) else None,
+                time_range_display=time_range_display,
             )
             content_with_header = header + piece
-            embedding_text = header + normalize_for_embedding(piece)
+
+            # 비식별화된 piece (있으면 그것, 없으면 anonymize_text 로 fallback)
+            piece_san = sanitized_pieces[piece_idx]
+            if piece_san is None:
+                piece_san = anonymize_text(piece)
+            sanitized_content = header + piece_san
+
+            # 임베딩에는 비식별화된 본문을 사용 → 사람 이름/실시간이 embedding 에
+            # 끼어들지 않도록 한다. 다만 header 의 [문서날짜], [업무주제] 는
+            # 검색 키워드로 활용되도록 그대로 둔다.
+            embedding_text = header + normalize_for_embedding(piece_san)
             sw = get_source_weight(
                 document.source_type, section.content_type, document.uploaded_category
             )
@@ -194,14 +273,27 @@ def chunk_sections(
                 "source_weight": float(sw),
                 "created_at": now_iso(),
                 "file_hash": document.file_hash,
-                "raw_table_hash": section.metadata.get("raw_table_hash"),
-                "summary_type": section.metadata.get("summary_type"),
-                "sheet_name": section.metadata.get("sheet_name"),
+                "raw_table_hash": section_meta.get("raw_table_hash"),
+                "summary_type": section_meta.get("summary_type"),
+                "sheet_name": section_meta.get("sheet_name"),
                 "chunk_hash": text_hash(piece),
                 "file_hash_short": file_hash_short,
+                # ------ slack v2 / 비식별화 추가 필드 ------
+                "document_date": doc_date,
+                "date_text": section_meta.get("date_text"),
+                "date_source": section_meta.get("date_source"),
+                "todo_phase": todo_phase or "unknown",
+                "topic_tags": topic_tags if isinstance(topic_tags, list) else [],
+                "primary_topic": primary_topic,
+                "speaker_roles": section_meta.get("speaker_roles") or [],
+                "display_speakers": section_meta.get("display_speakers") or [],
+                "time_buckets": section_meta.get("time_buckets") or [],
+                "time_range_display": time_range_display,
+                "parser_format": section_meta.get("parser_format"),
+                "sanitized_content": sanitized_content,
             }
-            # 추가 metadata 머지
-            for k, v in (section.metadata or {}).items():
+            # 추가 metadata 머지 (위에서 명시적으로 다룬 키는 덮어쓰지 않음)
+            for k, v in section_meta.items():
                 metadata.setdefault(k, v)
 
             chunks.append(

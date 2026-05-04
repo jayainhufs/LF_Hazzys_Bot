@@ -15,7 +15,6 @@ ChromaDB 는 cosine **distance** (낮을수록 좋음) 를 반환하므로,
 """
 from __future__ import annotations
 
-from copy import copy
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -26,6 +25,7 @@ from src.rag.reranker import (
     DEFAULT_CATEGORY_BOOST,
     apply_diversity_penalty,
     classify_query,
+    extract_query_metadata,
     rerank_simple,
 )
 from src.schemas import RetrievedChunk
@@ -74,6 +74,7 @@ class Retriever:
         min_final: Optional[float] = None,
         max_per_file: Optional[int] = None,
         use_mmr: Optional[bool] = None,
+        enable_date_filter: Optional[bool] = None,
     ) -> List[RetrievedChunk]:
         """기존 호환 인터페이스. threshold 통과 + MMR 적용된 chunk 만 반환."""
         details = self.retrieve_with_details(
@@ -86,6 +87,7 @@ class Retriever:
             min_final=min_final,
             max_per_file=max_per_file,
             use_mmr=use_mmr,
+            enable_date_filter=enable_date_filter,
         )
         return details.passed
 
@@ -101,6 +103,7 @@ class Retriever:
         min_final: Optional[float] = None,
         max_per_file: Optional[int] = None,
         use_mmr: Optional[bool] = None,
+        enable_date_filter: Optional[bool] = None,
     ) -> RetrievalDetails:
         """
         검색 + threshold + MMR + parent-child 까지 적용한 진단용 결과.
@@ -112,6 +115,9 @@ class Retriever:
             - candidates : 모든 후보 (탈락 포함, passed_threshold/filter_reason 채워짐)
             - summary    : 카운트 / 임계값 / 옵션 메타
         """
+        # query metadata 추출 (date / topics / intent)
+        query_meta = extract_query_metadata(query or "")
+
         details = RetrievalDetails(summary={
             "candidate_count": 0,
             "passed_count": 0,
@@ -124,7 +130,22 @@ class Retriever:
             "top_k": int(top_k or settings.top_k),
             "uploaded_category_filter": uploaded_category or "all",
             "score_interpretation": "score = 1 - cosine_distance (높을수록 유사)",
-            "query_class": classify_query(query or ""),
+            "query_class": query_meta.get("query_class") or classify_query(query or ""),
+            # date / topic 진단
+            "query_date": query_meta.get("query_date"),
+            "query_date_text": query_meta.get("query_date_text"),
+            "query_topics": query_meta.get("query_topics") or [],
+            "query_intent": query_meta.get("query_intent") or [],
+            "enable_date_filter": bool(
+                enable_date_filter if enable_date_filter is not None else settings.enable_date_filter
+            ),
+            "date_exact_match_boost": float(settings.date_exact_match_boost),
+            "date_mismatch_penalty": float(settings.date_mismatch_penalty),
+            "topic_match_boost": float(settings.topic_match_boost),
+            "topic_mismatch_penalty": float(settings.topic_mismatch_penalty),
+            # 비식별화 상태 (UI 노출용)
+            "anonymize_output": bool(settings.anonymize_output),
+            "show_raw_content": bool(settings.show_raw_content),
         })
 
         if not query or not query.strip():
@@ -137,6 +158,8 @@ class Retriever:
         min_fin = float(details.summary["min_final"])
         per_file = int(details.summary["max_per_file"])
         do_mmr = bool(details.summary["use_mmr"])
+        do_date_filter = bool(details.summary["enable_date_filter"])
+        q_date = query_meta.get("query_date")
 
         filters = self._build_filters(uploaded_category)
 
@@ -150,18 +173,31 @@ class Retriever:
             return details
 
         # 1) rerank (final_score 채움 + 진단 metadata 기록)
-        ranked = rerank_simple(candidates, category_boost=CATEGORY_BOOST, query=query)
+        ranked = rerank_simple(
+            candidates,
+            category_boost=CATEGORY_BOOST,
+            query=query,
+            query_metadata=query_meta,
+        )
 
         # 2) parent-child 보강 (Excel summary -> raw_table)
         if with_parent_children:
             ranked = self._augment_with_children(ranked, max_per_parent=max_children_per_parent)
 
-        # 3) threshold 필터 + 파일별 cap
+        # 3) threshold 필터 + 파일별 cap (+ optional date filter)
         per_file_count: Dict[str, int] = {}
         passed: List[RetrievedChunk] = []
         for c in ranked:
             sim = float(c.score or 0.0)
             fin = float(c.final_score or 0.0)
+            chunk_date = c.metadata.get("document_date")
+
+            if do_date_filter and q_date and chunk_date and chunk_date != q_date:
+                c.passed_threshold = False
+                c.filter_reason = (
+                    f"date_filter_excluded(query_date={q_date}, doc_date={chunk_date})"
+                )
+                continue
             if sim < min_sim:
                 c.passed_threshold = False
                 c.filter_reason = f"similarity({sim:.3f}) < min_similarity({min_sim:.2f})"

@@ -3,21 +3,27 @@ reranker.py
 ===========
 1차 MVP rule-based reranker.
 
-final_score = similarity_score * source_weight * category_boost * content_type_boost * recency_score
+final_score = similarity_score
+              * source_weight
+              * category_boost
+              * content_type_boost
+              * recency_score
+              * date_match_boost
+              * topic_match_boost
 
 - BM25 / LLM reranker / cross-encoder 는 아직 사용하지 않는다.
 - query keyword heuristic 으로 카테고리 boost 를 살짝 보정한다.
+- query 에 날짜/주제(topic) 가 들어 있으면 chunk metadata 와 매칭해
+  date / topic boost / penalty 를 추가로 적용한다.
 - diversity 보정용 MMR 비슷한 휴리스틱(`apply_diversity_penalty`) 도 함께 제공한다.
-
-추후 Gemini 기반 LLM reranker / cross-encoder reranker 를 붙일 수 있도록
-인터페이스만 미리 정의해 둔다.
 """
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from src.config import settings
+from src.ingestion.date_extractor import extract_document_date
 from src.logger import get_logger
 from src.schemas import RetrievedChunk
 
@@ -66,6 +72,32 @@ _SETTING_KW = (
 _KAKAO_KW = ("카카오톡", "카카오 메시지", "카카오메시지", "카카오 발송", "발송",)
 
 
+# Topic 키워드 (slack_manual_parser._TOPIC_KEYWORDS 와 정합)
+_QUERY_TOPIC_KEYWORDS: Dict[str, Tuple[str, ...]] = {
+    "meta": (
+        "메타", "asc", "bau", "캠페인", "광고세트", "카탈로그", "컨첵", "크첵",
+        "t&d", "td", "랜딩", "네이밍", "매핑", "토글",
+    ),
+    "kakao": ("카카오", "카카오톡", "카카오메시지", "메시지 발송", "발송", "잔액", "충전"),
+    "settlement": (
+        "정산", "세금계산서", "인보이스", "모비사인", "sf", "입금", "거래명세서",
+    ),
+    "outdoor": ("옥외", "파르나스", "편성표", "구좌", "선입금"),
+    "report": ("dr", "rd", "리포트", "월간보고", "월간 보고"),
+    "nbt": ("nbt", "토스"),
+    "greenp": ("그린피", "greenp"),
+    "youtube": ("유튜브", "youtube", "구글 유튜브"),
+}
+
+_INTENT_PROCEDURE = ("순서", "프로세스", "어떻게 진행", "어떻게 해야", "방법", "단계")
+_INTENT_TODO_LOOKUP = (
+    "그날", "놓치면 안", "놓치면 안되는", "놓치면 안 되는", "뭐였어",
+    "뭐 였어", "todo", "할 일",
+)
+_INTENT_EXPLANATION = ("설명", "차이", "이유", "원인", "왜")
+_INTENT_ISSUE_LOOKUP = ("이슈", "문제", "어려웠", "발생한", "발송 관련", "어땠어")
+
+
 def classify_query(query: str) -> Dict[str, bool]:
     """질문 자동 분류는 복잡하게 하지 않고, keyword-based heuristic 으로만 구현한다."""
     text = (query or "").lower()
@@ -74,6 +106,67 @@ def classify_query(query: str) -> Dict[str, bool]:
         "is_todo": any(k in text for k in _TODO_KW),
         "is_setting": any(k in text for k in _SETTING_KW),
         "is_kakao": any(k in text for k in _KAKAO_KW),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Query metadata (date / topics / intent)
+# ---------------------------------------------------------------------------
+def _detect_intent(text: str) -> List[str]:
+    out: List[str] = []
+    if any(k in text for k in _INTENT_PROCEDURE):
+        out.append("procedure")
+    if any(k in text for k in _INTENT_TODO_LOOKUP):
+        out.append("todo_lookup")
+    if any(k in text for k in _INTENT_EXPLANATION):
+        out.append("explanation")
+    if any(k in text for k in _INTENT_ISSUE_LOOKUP):
+        out.append("issue_lookup")
+    return out
+
+
+def extract_query_metadata(query: str) -> Dict[str, Any]:
+    """
+    질문에서 다음을 추출한다.
+    - query_date : "YYYY-MM-DD" | None
+    - query_topics : list[str]
+    - query_intent : list[str]
+    - query_class : classify_query 결과 (호환)
+    """
+    if not query:
+        return {
+            "query_date": None,
+            "query_topics": [],
+            "query_intent": [],
+            "query_class": classify_query(""),
+            "query_date_text": None,
+        }
+
+    text = query.strip()
+    low = text.lower()
+
+    # 1) 날짜 추출 (date_extractor 재사용 — 본문 검색이라 default_year 적용)
+    info = extract_document_date(file_name=None, content=text)
+    query_date = info.get("document_date")
+    query_date_text = info.get("date_text")
+
+    # 2) topic 키워드 매칭
+    topics: List[str] = []
+    for tag, kws in _QUERY_TOPIC_KEYWORDS.items():
+        for kw in kws:
+            if kw.lower() in low:
+                topics.append(tag)
+                break
+
+    # 3) intent
+    intent = _detect_intent(low)
+
+    return {
+        "query_date": query_date,
+        "query_date_text": query_date_text,
+        "query_topics": topics,
+        "query_intent": intent,
+        "query_class": classify_query(text),
     }
 
 
@@ -155,6 +248,66 @@ def _recency_score(created_at_iso: Optional[str]) -> float:
     return 0.85
 
 
+def _date_match_factor(
+    chunk_date: Optional[str],
+    query_date: Optional[str],
+    *,
+    boost: float,
+    penalty: float,
+) -> Tuple[float, str]:
+    """
+    chunk.document_date 와 query_date 비교 → (multiplier, label).
+
+    label:
+      - "exact"    : 일치
+      - "mismatch" : 둘 다 있는데 다름
+      - "none"     : 둘 중 하나라도 비어있어 비교 불가
+    """
+    if not query_date:
+        return 1.0, "none"
+    if not chunk_date:
+        # query 에는 날짜가 있는데 chunk 에는 없음 → 약하게 페널티 적용
+        # (guide 처럼 날짜 없는 문서를 너무 누르지 않도록 sqrt 로 완화)
+        weak = penalty + (1.0 - penalty) * 0.5  # ex) 0.55 → 0.775
+        return weak, "none"
+    if chunk_date == query_date:
+        return float(boost), "exact"
+    return float(penalty), "mismatch"
+
+
+def _topic_match_factor(
+    chunk_topics: List[str],
+    chunk_source_type: str,
+    query_topics: List[str],
+    query_intent: List[str],
+    *,
+    boost: float,
+    penalty: float,
+) -> Tuple[float, str]:
+    """
+    chunk.topic_tags 와 query_topics 비교 → (multiplier, label).
+
+    label:
+      - "match"    : 1개 이상 겹침
+      - "mismatch" : 둘 다 있는데 안 겹침
+      - "none"     : query_topics 가 비어 있거나 chunk_topics 가 비어 있어 비교 불가
+    """
+    if not query_topics:
+        return 1.0, "none"
+    if not chunk_topics:
+        # query 에 topic 이 있는데 chunk 에는 topic_tags 가 없음.
+        # procedure 의도이고 chunk_source_type=guide 라면 약하게 (페널티 거의 안 줌).
+        if "procedure" in query_intent and (chunk_source_type or "").lower() in {"guide"}:
+            return 0.95, "none"
+        weak = penalty + (1.0 - penalty) * 0.5
+        return weak, "none"
+    overlap = set(t.lower() for t in chunk_topics) & set(t.lower() for t in query_topics)
+    if overlap:
+        return float(boost), "match"
+    # 둘 다 있는데 겹치지 않음 → 강한 페널티
+    return float(penalty), "mismatch"
+
+
 def _content_type_boost(content_type: str, source_type: str) -> float:
     """
     content_type → boost. user 스펙을 그대로 따른다.
@@ -180,6 +333,12 @@ def rerank_simple(
     candidates: List[RetrievedChunk],
     category_boost: Optional[Dict[str, float]] = None,
     query: Optional[str] = None,
+    query_metadata: Optional[Dict[str, Any]] = None,
+    *,
+    date_exact_match_boost: Optional[float] = None,
+    date_mismatch_penalty: Optional[float] = None,
+    topic_match_boost: Optional[float] = None,
+    topic_mismatch_penalty: Optional[float] = None,
 ) -> List[RetrievedChunk]:
     """
     final_score 를 채우고 내림차순 정렬한다.
@@ -189,6 +348,7 @@ def rerank_simple(
     candidates : VectorStore.search 결과
     category_boost : uploaded_category 별 기본 boost (None 이면 DEFAULT_CATEGORY_BOOST)
     query : 주어지면 keyword-heuristic 으로 카테고리 부스트를 보정한다.
+    query_metadata : extract_query_metadata 결과. 없으면 query 로부터 자동 추출.
 
     또한 각 chunk 의 metadata 에 다음 진단 필드를 채워둔다 (UI 노출용).
     - similarity_score
@@ -196,12 +356,36 @@ def rerank_simple(
     - category_boost
     - content_type_boost
     - recency_score
+    - date_boost / date_match
+    - topic_boost / topic_match
     """
     base_boost = category_boost or DEFAULT_CATEGORY_BOOST
-    query_class = classify_query(query) if query else {
-        "is_settlement": False, "is_todo": False,
-        "is_setting": False, "is_kakao": False,
-    }
+
+    if query_metadata is None:
+        query_metadata = extract_query_metadata(query or "")
+    query_class = query_metadata.get("query_class") or classify_query(query or "")
+    query_date: Optional[str] = query_metadata.get("query_date")
+    query_topics: List[str] = list(query_metadata.get("query_topics") or [])
+    query_intent: List[str] = list(query_metadata.get("query_intent") or [])
+
+    d_boost = float(
+        date_exact_match_boost
+        if date_exact_match_boost is not None
+        else settings.date_exact_match_boost
+    )
+    d_pen = float(
+        date_mismatch_penalty
+        if date_mismatch_penalty is not None
+        else settings.date_mismatch_penalty
+    )
+    t_boost = float(
+        topic_match_boost if topic_match_boost is not None else settings.topic_match_boost
+    )
+    t_pen = float(
+        topic_mismatch_penalty
+        if topic_mismatch_penalty is not None
+        else settings.topic_mismatch_penalty
+    )
 
     for c in candidates:
         sim = max(0.0, float(c.score or 0.0))
@@ -211,14 +395,39 @@ def rerank_simple(
         ct_b = _content_type_boost(c.content_type, c.source_type)  # noqa: ARG001
         rs = _recency_score(c.metadata.get("created_at"))
 
-        c.final_score = sim * sw * cb * ct_b * rs
+        # date / topic 매칭
+        chunk_date = c.metadata.get("document_date")
+        date_factor, date_label = _date_match_factor(
+            chunk_date, query_date, boost=d_boost, penalty=d_pen
+        )
+
+        chunk_topics = c.metadata.get("topic_tags") or []
+        if not isinstance(chunk_topics, list):
+            chunk_topics = []
+        topic_factor, topic_label = _topic_match_factor(
+            chunk_topics,
+            (c.source_type or "").lower(),
+            query_topics,
+            query_intent,
+            boost=t_boost,
+            penalty=t_pen,
+        )
+
+        c.final_score = sim * sw * cb * ct_b * rs * date_factor * topic_factor
         # UI 진단용 (read-only 의도)
         c.metadata["similarity_score"] = round(sim, 6)
         c.metadata["source_weight"] = round(sw, 6)
         c.metadata["category_boost"] = round(cb, 6)
         c.metadata["content_type_boost"] = round(ct_b, 6)
         c.metadata["recency_score"] = round(rs, 6)
+        c.metadata["date_boost"] = round(date_factor, 6)
+        c.metadata["date_match"] = date_label
+        c.metadata["topic_boost"] = round(topic_factor, 6)
+        c.metadata["topic_match"] = topic_label
         c.metadata["query_class"] = query_class
+        c.metadata["query_date"] = query_date
+        c.metadata["query_topics"] = query_topics
+        c.metadata["query_intent"] = query_intent
 
     candidates.sort(key=lambda x: x.final_score, reverse=True)
     return candidates

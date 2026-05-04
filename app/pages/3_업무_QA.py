@@ -15,6 +15,7 @@ import streamlit as st
 from app.components.chat_box import render_answer
 from app.components.sidebar import render_sidebar
 from src.config import settings
+from src.preprocessing.anonymizer import anonymize_text
 from src.rag.qa_pipeline import QAPipeline
 
 st.set_page_config(page_title="업무 QA", layout="wide")
@@ -45,6 +46,13 @@ st.caption(
     f"MIN_FINAL={settings.min_final_score:.2f} · "
     f"MIN_RETRIEVED={settings.min_retrieved_chunks} · "
     f"MAX_PER_FILE={settings.max_chunks_per_file} · USE_MMR={settings.use_mmr}"
+)
+st.caption(
+    f"비식별화: ANONYMIZE_OUTPUT={settings.anonymize_output} · "
+    f"SHOW_RAW_CONTENT={settings.show_raw_content} · "
+    f"SHOW_SPEAKER_NAMES={settings.show_speaker_names} · "
+    f"SHOW_EXACT_TIMESTAMPS={settings.show_exact_timestamps} · "
+    f"SHOW_EXACT_DATES={settings.show_exact_dates}"
 )
 
 question = st.text_area(
@@ -92,12 +100,21 @@ if run:
 
     qc = summary.get("query_class") or {}
     qc_tags = [name.replace("is_", "") for name, v in qc.items() if v]
+    q_topics = summary.get("query_topics") or []
+    q_intent = summary.get("query_intent") or []
+    q_date = summary.get("query_date")
     st.caption(
         f"keyword class: {', '.join(qc_tags) if qc_tags else '(none)'} · "
+        f"query_topics: {', '.join(q_topics) if q_topics else '(none)'} · "
+        f"query_intent: {', '.join(q_intent) if q_intent else '(none)'} · "
+        f"query_date: {q_date or '(none)'}"
+    )
+    st.caption(
         f"min_sim={summary.get('min_similarity', settings.min_similarity_score):.2f} · "
         f"min_final={summary.get('min_final', settings.min_final_score):.2f} · "
         f"max_per_file={summary.get('max_per_file', settings.max_chunks_per_file)} · "
-        f"use_mmr={summary.get('use_mmr', settings.use_mmr)}"
+        f"use_mmr={summary.get('use_mmr', settings.use_mmr)} · "
+        f"enable_date_filter={summary.get('enable_date_filter', settings.enable_date_filter)}"
     )
 
     if skipped:
@@ -140,6 +157,18 @@ if run:
         for i, c in enumerate(chunks, start=1):
             md = c.metadata or {}
             flag = "PASS" if c.passed_threshold else "DROP"
+
+            # display_date 라벨
+            if md.get("document_date"):
+                if settings.show_exact_dates:
+                    disp_date = str(md.get("document_date"))
+                elif settings.anonymize_output:
+                    disp_date = f"해당 {settings.anonymized_date_label}"
+                else:
+                    disp_date = str(md.get("document_date"))
+            else:
+                disp_date = "-"
+
             title = (
                 f"#{i} [{flag}] [{c.uploaded_category}/{c.source_type}/{c.content_type}] "
                 f"{c.file_name} · {c.section_title or '-'} "
@@ -151,10 +180,41 @@ if run:
                     + (f" · filter_reason=`{c.filter_reason}`" if c.filter_reason else "")
                 )
                 st.markdown(
+                    f"- file_name=`{c.file_name}` · "
+                    f"uploaded_category=`{c.uploaded_category}` · "
+                    f"source_type=`{c.source_type}`\n"
+                    f"- section_title=`{c.section_title or '-'}` · "
+                    f"display_date=`{disp_date}` · "
+                    f"primary_topic=`{md.get('primary_topic') or '-'}` · "
+                    f"todo_phase=`{md.get('todo_phase') or '-'}`\n"
+                    f"- topic_tags=`{md.get('topic_tags') or []}` · "
+                    f"parser_format=`{md.get('parser_format') or '-'}`\n"
+                    f"- date_match=`{md.get('date_match')}` · "
+                    f"topic_match=`{md.get('topic_match')}` · "
+                    f"date_boost=`{md.get('date_boost')}` · "
+                    f"topic_boost=`{md.get('topic_boost')}`\n"
                     f"- source_weight=`{md.get('source_weight')}` · "
                     f"category_boost=`{md.get('category_boost')}` · "
                     f"content_type_boost=`{md.get('content_type_boost')}`"
                 )
-                st.code(c.content[:4000], language="markdown")
+
+                # Preview: sanitized 우선
+                if settings.anonymize_output:
+                    body_src = md.get("sanitized_content") or anonymize_text(c.content or "")
+                else:
+                    body_src = c.content or ""
+                st.markdown("**Preview (sanitized)**")
+                st.code((body_src or "")[:4000], language="markdown")
+
+                if settings.show_raw_content:
+                    st.warning(
+                        "원문에는 사람 이름/멘션/정확한 시간이 포함될 수 있습니다."
+                    )
+                    st.code(c.content[:4000], language="markdown")
+
                 st.caption("metadata")
-                st.json({k_: v for k_, v in md.items() if v is not None}, expanded=False)
+                md_view = {
+                    k_: v for k_, v in md.items()
+                    if v is not None and k_ != "sanitized_content"
+                }
+                st.json(md_view, expanded=False)
