@@ -495,16 +495,40 @@ MASK_LINKS=true
 LLM 기반 업무 지식카드 정규화는 raw Slack/Guide/Excel/메일/카카오 자료를 바로 chunking 하기 전에,
 업무 절차/이슈/체크리스트/FAQ 같은 구조화된 `KnowledgeCard` 로 정리해 검색과 QA 품질을 높이기 위한 단계적 기능이다.
 
-현재 Task 1 에서는 실제 LLM 호출 없이 기반 구조만 추가했다.
+### Task 1 (완료) — 기반 구조
 
 - `KnowledgeCard` schema 를 추가해 workflow / issue / checklist / faq / decision / glossary /
   communication_template 형태의 정규화 결과를 담을 수 있게 했다.
 - `NormalizationStore` 를 추가해 정규화 결과 JSON/Markdown 을
   `data/processed/normalized` 아래에 저장할 수 있게 했다.
-- 같은 raw 파일은 `file_hash + prompt_version + model_name` 기반 cache key 로 중복 호출을 방지할 예정이다.
+- 같은 raw 파일은 `file_hash + prompt_version + model_name` 기반 cache key 로 중복 호출을 방지한다.
 - 원본 raw 파일은 수정하지 않는다.
-- 실제 Guide / Slack Thread normalizer prompt 와 Gemini 호출은 Task 2~3 에서 구현 예정이다.
-- pipeline 연결, Streamlit 지식카드 관리 UI, knowledge_card 우선 retrieval, QA prompt 변경은 Task 4~7 에서 순차적으로 구현 예정이다.
+
+### Task 2 (완료) — Guide normalizer + LLM 호출 + cache
+
+- Guide txt 문서를 `KnowledgeCard` 로 변환하는 `GuideKnowledgeNormalizer` 를 추가했다.
+  prompt 는 `src/normalization/normalization_prompt.py` 의
+  `build_guide_normalization_prompt()` 로 구성하며, prompt 버전은
+  `GUIDE_NORMALIZER_PROMPT_VERSION = "guide_v1"` 로 고정했다.
+- LLM 호출은 기존 `GeminiClient.generate_text(system_instruction=..., temperature=...)`
+  를 그대로 재사용한다. 응답이 ```json 코드블록으로 감싸진 경우도 안전하게 파싱한다.
+- 결과는 `NormalizationStore` 를 통해
+  `data/processed/normalized/json/<file_hash_short>.json` 과
+  `data/processed/normalized/markdown/<file_hash_short>.md` 로 저장된다.
+- `file_hash + prompt_version + model_name` cache key 로 중복 호출을 방지한다.
+  cache hit 이면 LLM 호출 없이 저장된 JSON 에서 KnowledgeCard 를 복원한다.
+- 카드 수는 `NORMALIZATION_MAX_CARDS_PER_FILE` 로 상한이 적용된다.
+- 외부 API 없이도 검증 가능하도록 `tests/test_guide_normalizer.py` 에 mock 기반
+  단위 테스트(파싱, cache hit/miss, 한글 보존, 카드 수 제한 등)를 추가했다.
+- 실제 pipeline 연결은 Task 4 에서, Streamlit 지식카드 관리 UI 는 Task 5 에서 진행한다.
+
+### Task 3~7 (예정)
+
+- Task 3: Slack Thread normalizer prompt + LLM 호출 + cache
+- Task 4: pipeline 에 `ENABLE_LLM_NORMALIZATION` 옵션 연결
+- Task 5: Streamlit 지식카드 관리 UI 추가
+- Task 6: 검색에서 `knowledge_card` 우선 retrieval 적용
+- Task 7: QA prompt 에서 `knowledge_card` 중심 답변
 
 ---
 
