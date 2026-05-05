@@ -55,6 +55,11 @@ class IngestResult:
     document_id: str = ""
     file_hash: str = ""
     error: str = ""
+    # ----- LLM normalization (Task 4 부터 사용) -----
+    normalized_chunks_added: int = 0
+    normalized_card_count: int = 0
+    normalized_kind: str = ""
+    normalized_skipped_reason: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return self.__dict__
@@ -68,6 +73,7 @@ class IngestSummary:
     skipped: int = 0
     failed: int = 0
     chunks_added_total: int = 0
+    normalized_chunks_total: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +89,9 @@ def ingest_file(
     file_registry: Optional[FileRegistry] = None,
     excel_summarizer: Optional[ExcelSummarizer] = None,
     enable_excel_summary: Optional[bool] = None,
+    enable_llm_normalization: Optional[bool] = None,
+    gemini_client: Optional[Any] = None,
+    normalization_store: Optional[Any] = None,
     skip_if_indexed: bool = True,
 ) -> IngestResult:
     """파일 1개 색인. 실패해도 raise 하지 않고 IngestResult 로 반환."""
@@ -230,6 +239,43 @@ def ingest_file(
         store.save_document(document)
         store.save_chunks(document_id, chunks)
 
+        # 7.5) (옵션) LLM 기반 KnowledgeCard normalization branch
+        #      - ENABLE_LLM_NORMALIZATION=false 일 때는 절대 실행되지 않는다.
+        #      - normalization 실패는 raw ingest 흐름에 영향을 주지 않는다.
+        use_normalization = (
+            enable_llm_normalization
+            if enable_llm_normalization is not None
+            else settings.enable_llm_normalization
+        )
+        if use_normalization:
+            try:
+                from src.normalization.pipeline_integration import run_normalization_branch
+
+                norm_result = run_normalization_branch(
+                    document=document,
+                    parsed_sections=parsed_sections,
+                    raw_chunks=chunks,
+                    embedder=emb,
+                    vector_store=vstore,
+                    document_store=store,
+                    gemini_client=gemini_client,
+                    normalization_store=normalization_store,
+                    settings_obj=settings,
+                )
+                res.normalized_kind = str(norm_result.get("kind") or "")
+                res.normalized_card_count = int(norm_result.get("card_count") or 0)
+                res.normalized_chunks_added = int(norm_result.get("chunks_added") or 0)
+                res.normalized_skipped_reason = str(
+                    norm_result.get("skipped_reason") or ""
+                )
+            except Exception as e:  # noqa: BLE001
+                # run_normalization_branch 자체가 raise 하지 않도록 설계되었지만
+                # 모듈 import 실패 등 예외 상황에서도 raw ingest 가 죽지 않게 한다.
+                log.warning(
+                    "LLM normalization branch 진입 실패 (raw ingest 는 계속 진행): %s", e
+                )
+                res.normalized_skipped_reason = f"branch entry 실패: {e}"
+
         # 8) registry
         registry.upsert(
             file_hash=fhash,
@@ -245,7 +291,13 @@ def ingest_file(
         res.status = "indexed"
         res.document_id = document_id
         res.chunks_added = int(n_added)
-        log.info("[indexed] %s | chunks=%d, summaries=%d", name, n_added, res.summary_count)
+        log.info(
+            "[indexed] %s | chunks=%d, summaries=%d, normalized=%d",
+            name,
+            n_added,
+            res.summary_count,
+            res.normalized_chunks_added,
+        )
         return res
 
     except Exception as e:  # noqa: BLE001
@@ -293,6 +345,9 @@ def ingest_folder(
     raw_root: Optional[Path] = None,
     *,
     enable_excel_summary: Optional[bool] = None,
+    enable_llm_normalization: Optional[bool] = None,
+    gemini_client: Optional[Any] = None,
+    normalization_store: Optional[Any] = None,
     on_progress: Optional[Callable[[IngestResult, int, int], None]] = None,
     skip_if_indexed: bool = True,
 ) -> IngestSummary:
@@ -322,12 +377,16 @@ def ingest_folder(
             file_registry=registry,
             excel_summarizer=summarizer,
             enable_excel_summary=enable_excel_summary,
+            enable_llm_normalization=enable_llm_normalization,
+            gemini_client=gemini_client,
+            normalization_store=normalization_store,
             skip_if_indexed=skip_if_indexed,
         )
         summary.results.append(res)
         if res.status == "indexed":
             summary.indexed += 1
             summary.chunks_added_total += int(res.chunks_added)
+            summary.normalized_chunks_total += int(res.normalized_chunks_added)
         elif res.status == "skipped":
             summary.skipped += 1
         else:
@@ -339,12 +398,14 @@ def ingest_folder(
                 pass
 
     log.info(
-        "ingest_folder 완료: total=%d, indexed=%d, skipped=%d, failed=%d, chunks_added=%d, tracker=%s",
+        "ingest_folder 완료: total=%d, indexed=%d, skipped=%d, failed=%d, "
+        "chunks_added=%d, normalized=%d, tracker=%s",
         summary.total,
         summary.indexed,
         summary.skipped,
         summary.failed,
         summary.chunks_added_total,
+        summary.normalized_chunks_total,
         tracker.snapshot(),
     )
     return summary

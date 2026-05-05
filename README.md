@@ -548,9 +548,49 @@ LLM 기반 업무 지식카드 정규화는 raw Slack/Guide/Excel/메일/카카�
   topic_tags 병합 등)를 추가했다.
 - 실제 pipeline 연결은 Task 4 에서, Streamlit 지식카드 관리 UI 는 Task 5 에서 진행한다.
 
-### Task 4~7 (예정)
+### Task 4 (완료) — pipeline 에 `ENABLE_LLM_NORMALIZATION` 옵션 연결
 
-- Task 4: pipeline 에 `ENABLE_LLM_NORMALIZATION` 옵션 연결
+- `src/normalization/pipeline_integration.py` 를 추가해 ingest pipeline 분기를
+  helper 함수로 분리했다 (`should_normalize_file`, `extract_normalization_inputs`,
+  `attach_parent_raw_chunk_ids`, `knowledge_cards_to_chunks`,
+  `normalize_document_for_pipeline`, `run_normalization_branch`).
+- `src/pipeline.py` 의 `ingest_file` / `ingest_folder` 가 `enable_llm_normalization`,
+  `gemini_client`, `normalization_store` 옵션을 받게 했다.
+  - `ENABLE_LLM_NORMALIZATION=false`(기본) 일 때는 어떤 normalizer 도 호출되지 않으며
+    기존 raw ingest 흐름과 완전히 동일하게 동작한다.
+  - `true` 일 때는 raw chunk 저장 직후 LLM normalization branch 가 실행되어
+    `KnowledgeCard` 들을 만들고 ChromaDB 에 별도 chunk(`content_type=
+    "knowledge_card"`, `source_type="llm_normalized"`) 로 추가 저장한다.
+- 분기 정책 (Task 4 범위):
+  - `uploaded_category=="guide"` 또는 `source_type=="guide"` →
+    `GuideKnowledgeNormalizer`
+  - `uploaded_category in {"slack","slack_manual"}` 또는
+    `source_type=="slack_manual"` → `SlackThreadKnowledgeNormalizer`
+  - 카카오 / 메일 / Excel / Word 등은 normalization skip (이후 Task 에서 확장)
+- 안전성 가드:
+  - `run_normalization_branch` 는 raise 하지 않는다. LLM 호출 / embedding /
+    vector store / file 저장 어떤 단계가 실패해도 `log.warning` 만 남기고
+    raw indexing 흐름은 계속 진행된다.
+  - `IngestResult` 에 `normalized_kind` / `normalized_card_count` /
+    `normalized_chunks_added` / `normalized_skipped_reason` 필드를 추가해
+    호출 측이 결과를 그대로 활용할 수 있게 했다.
+- KnowledgeCard → Chunk 변환 (`knowledge_cards_to_chunks`):
+  - content 는 `card.sanitized_markdown` 우선, 없으면 `card.to_markdown()`.
+  - metadata 에 `card_id`, `card_type`, `primary_topic`, `topic_tags`,
+    `task_type`, `document_date`, `display_date`, `source_file_hash`,
+    `parent_raw_chunk_ids`, `source_weight` (`NORMALIZATION_CARD_SOURCE_WEIGHT`),
+    `normalized=True`, `prompt_version`, `model_name`, `todo_phase`,
+    `parser_format` 을 함께 기록한다 (Task 6 의 retrieval 우선순위 적용 시 사용).
+- 같은 raw 파일은 `file_hash + prompt_version + model_name` cache 로 LLM 재호출이
+  방지되며, JSON / Markdown 결과는 `NormalizationStore` 가 관리한다.
+- 외부 Gemini API 호출 없이 검증 가능하도록 `tests/test_pipeline_normalization.py`
+  에 mock 기반 단위 테스트 (분기, 입력 추출, parent link, chunk 변환, branch
+  happy path, 실패 fallback 등) 30 건을 추가했다.
+- Streamlit 지식카드 관리 UI 노출은 Task 5, 검색 우선순위 적용은 Task 6,
+  QA 답변 반영은 Task 7 에서 진행한다.
+
+### Task 5~7 (예정)
+
 - Task 5: Streamlit 지식카드 관리 UI 추가
 - Task 6: 검색에서 `knowledge_card` 우선 retrieval 적용
 - Task 7: QA prompt 에서 `knowledge_card` 중심 답변
