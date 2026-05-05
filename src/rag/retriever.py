@@ -24,8 +24,10 @@ from src.rag.embedder import Embedder, get_default_embedder
 from src.rag.reranker import (
     DEFAULT_CATEGORY_BOOST,
     apply_diversity_penalty,
+    apply_knowledge_card_priority,
     classify_query,
     extract_query_metadata,
+    is_knowledge_card_chunk,
     rerank_simple,
 )
 from src.schemas import RetrievedChunk
@@ -143,6 +145,15 @@ class Retriever:
             "date_mismatch_penalty": float(settings.date_mismatch_penalty),
             "topic_match_boost": float(settings.topic_match_boost),
             "topic_mismatch_penalty": float(settings.topic_mismatch_penalty),
+            # KnowledgeCard 우선 retrieval 진단 (Task 6)
+            "prioritize_knowledge_cards": bool(settings.prioritize_knowledge_cards),
+            "knowledge_card_content_boost": float(settings.knowledge_card_content_boost),
+            "raw_evidence_boost": float(settings.raw_evidence_boost),
+            "enable_parent_raw_evidence": bool(settings.enable_parent_raw_evidence),
+            "parent_raw_evidence_top_k": int(settings.parent_raw_evidence_top_k),
+            "knowledge_card_count": 0,
+            "raw_evidence_count": 0,
+            "raw_fallback_count": 0,
             # 비식별화 상태 (UI 노출용)
             "anonymize_output": bool(settings.anonymize_output),
             "show_raw_content": bool(settings.show_raw_content),
@@ -177,6 +188,13 @@ class Retriever:
             candidates,
             category_boost=CATEGORY_BOOST,
             query=query,
+            query_metadata=query_meta,
+        )
+
+        # 1-b) KnowledgeCard 우선 retrieval (Task 6)
+        # PRIORITIZE_KNOWLEDGE_CARDS=true 면 knowledge_card chunk 가 raw 보다 위로 올라온다.
+        ranked = apply_knowledge_card_priority(
+            ranked,
             query_metadata=query_meta,
         )
 
@@ -227,12 +245,44 @@ class Retriever:
         # 5) top_k 절단
         passed = passed[:k]
 
-        # 6) 결과 패킹
+        # 6) parent_raw_evidence 진단 처리 (Task 6)
+        # ENABLE_PARENT_RAW_EVIDENCE=false 면 knowledge_card 의 parent_raw_chunk_ids 를 metadata 에서 비워둔다.
+        if not settings.enable_parent_raw_evidence:
+            for c in passed:
+                if is_knowledge_card_chunk(c):
+                    md = c.metadata or {}
+                    md["parent_raw_chunk_ids"] = []
+                    c.metadata = md
+
+        # 7) role 별 카운트 (요약용)
+        kc_count = 0
+        raw_evidence_count = 0
+        raw_fallback_count = 0
+        for c in passed:
+            md = c.metadata or {}
+            role = md.get("retrieval_role")
+            if role == "primary_card":
+                kc_count += 1
+            elif role == "raw_evidence":
+                raw_evidence_count += 1
+            elif role == "raw_fallback":
+                raw_fallback_count += 1
+            else:
+                # role 이 비어 있으면 추정값으로 보정
+                if is_knowledge_card_chunk(c):
+                    kc_count += 1
+                else:
+                    raw_fallback_count += 1
+
+        # 8) 결과 패킹
         details.candidates = ranked
         details.passed = passed
         details.summary["candidate_count"] = len(ranked)
         details.summary["passed_count"] = len(passed)
         details.summary["dropped_count"] = len(ranked) - len(passed)
+        details.summary["knowledge_card_count"] = kc_count
+        details.summary["raw_evidence_count"] = raw_evidence_count
+        details.summary["raw_fallback_count"] = raw_fallback_count
 
         tracker.set_retrieved_chunks(len(passed))
         return details

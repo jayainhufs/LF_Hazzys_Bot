@@ -113,6 +113,32 @@ with col10:
         unsafe_allow_html=True,
     )
 
+# ---------------------------- 옵션 라인 4 (KnowledgeCard 진단 / 필터) ---------
+col_kc1, col_kc2, col_kc3 = st.columns([1, 1, 1])
+with col_kc1:
+    content_type_filter = st.selectbox(
+        "content_type 필터",
+        ["전체", "knowledge_card", "conversation", "text", "raw_table"],
+        index=0,
+        help="검색 결과를 content_type 으로 필터링한다 (UI 상에서만 적용).",
+    )
+with col_kc2:
+    card_type_filter = st.selectbox(
+        "card_type 필터",
+        ["전체", "workflow", "checklist", "issue", "faq", "decision",
+         "glossary", "communication_template"],
+        index=0,
+        help="검색 결과를 KnowledgeCard 의 card_type 으로 필터링한다 (UI 상에서만 적용).",
+    )
+with col_kc3:
+    st.markdown(
+        f"**PRIORITIZE_KNOWLEDGE_CARDS**: `{settings.prioritize_knowledge_cards}`<br>"
+        f"**KC_CONTENT_BOOST**: `{settings.knowledge_card_content_boost}` · "
+        f"**RAW_EVIDENCE_BOOST**: `{settings.raw_evidence_boost}`<br>"
+        f"**ENABLE_PARENT_RAW_EVIDENCE**: `{settings.enable_parent_raw_evidence}`",
+        unsafe_allow_html=True,
+    )
+
 st.markdown(
     f"**현재 임베딩**: `{settings.embedding_provider}` / "
     f"`{settings.gemini_embedding_model if settings.embedding_provider == 'gemini' else settings.local_embedding_model}`"
@@ -175,12 +201,48 @@ if st.button("검색 실행", type="primary", disabled=not query.strip()):
     passed = details.passed
     candidates = details.candidates
 
+    # -------------------- UI 필터 적용 ---------------------------------------
+    def _ui_filter(chunk_list):
+        out = []
+        for c in chunk_list:
+            md = c.metadata or {}
+            if content_type_filter != "전체":
+                if (c.content_type or "").lower() != content_type_filter:
+                    continue
+            if card_type_filter != "전체":
+                if str(md.get("card_type") or "").lower() != card_type_filter:
+                    continue
+            out.append(c)
+        return out
+
+    if content_type_filter != "전체" or card_type_filter != "전체":
+        passed = _ui_filter(passed)
+        candidates_ui = _ui_filter(candidates)
+    else:
+        candidates_ui = candidates
+
     # -------------------- 요약 메트릭 ---------------------------------------
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("후보 (candidate)", summary.get("candidate_count", 0))
     m2.metric("통과 (passed)", summary.get("passed_count", 0))
     m3.metric("탈락 (dropped)", summary.get("dropped_count", 0))
     m4.metric("top_k", summary.get("top_k", k))
+
+    # KnowledgeCard 우선 retrieval 진단 메트릭 (Task 6)
+    m5, m6, m7, m8 = st.columns(4)
+    m5.metric("knowledge_card", summary.get("knowledge_card_count", 0))
+    m6.metric("raw_evidence", summary.get("raw_evidence_count", 0))
+    m7.metric("raw_fallback", summary.get("raw_fallback_count", 0))
+    m8.metric(
+        "KC_CONTENT_BOOST",
+        f"{float(summary.get('knowledge_card_content_boost', 1.0)):.2f}",
+    )
+    st.caption(
+        f"prioritize_knowledge_cards={summary.get('prioritize_knowledge_cards')} · "
+        f"raw_evidence_boost={summary.get('raw_evidence_boost')} · "
+        f"enable_parent_raw_evidence={summary.get('enable_parent_raw_evidence')} · "
+        f"parent_raw_evidence_top_k={summary.get('parent_raw_evidence_top_k')}"
+    )
 
     qc = summary.get("query_class") or {}
     qc_tags = [name.replace("is_", "") for name, v in qc.items() if v]
@@ -227,8 +289,21 @@ if st.button("검색 실행", type="primary", disabled=not query.strip()):
             note = ""
             if md.get("date_match") == "mismatch":
                 note = "date mismatch but passed"
+            parent_ids = md.get("parent_raw_chunk_ids") or []
+            if isinstance(parent_ids, list):
+                parent_ids_str = ",".join(str(x) for x in parent_ids[:3])
+            else:
+                parent_ids_str = str(parent_ids)
             rows.append({
                 "rank": i,
+                "retrieval_role": md.get("retrieval_role") or "-",
+                "content_type": c.content_type,
+                "source_type": c.source_type,
+                "card_id": md.get("card_id") or "-",
+                "card_type": md.get("card_type") or "-",
+                "card_type_match": bool(md.get("card_type_match", False)),
+                "kc_boost": round(float(md.get("knowledge_card_boost") or 1.0), 4),
+                "card_type_boost": round(float(md.get("card_type_boost") or 1.0), 4),
                 "score": round(c.score, 4),
                 "final_score": round(c.final_score, 4),
                 "source_weight": round(float(md.get("source_weight") or 0.0), 4),
@@ -239,13 +314,14 @@ if st.button("검색 실행", type="primary", disabled=not query.strip()):
                 "date_match": md.get("date_match"),
                 "topic_match": md.get("topic_match"),
                 "primary_topic": md.get("primary_topic"),
+                "task_type": md.get("task_type"),
                 "todo_phase": md.get("todo_phase"),
                 "parser_format": md.get("parser_format"),
                 "category": c.uploaded_category,
-                "content_type": c.content_type,
                 "file_name": c.file_name,
                 "section": c.section_title,
                 "display_date": _display_date(c),
+                "parent_raw_chunk_ids": parent_ids_str,
                 "note": note,
                 "preview": _content_preview(c, 80).replace("\n", " "),
             })
@@ -254,20 +330,34 @@ if st.button("검색 실행", type="primary", disabled=not query.strip()):
         st.subheader("상세 보기 (Passed)")
         for i, c in enumerate(passed, start=1):
             md = c.metadata or {}
+            role = md.get("retrieval_role") or "-"
+            role_badge = ""
+            if role == "primary_card":
+                role_badge = " · :violet[PRIMARY CARD]"
+            elif role == "raw_evidence":
+                role_badge = " · :blue[RAW EVIDENCE]"
             title = (
                 f"#{i} [PASS] {c.file_name} · {c.section_title or '-'} "
                 f"(score={c.score:.4f}, final={c.final_score:.4f})"
+                f"{role_badge}"
             )
             with st.expander(title, expanded=(i == 1)):
                 st.markdown(
+                    f"- **retrieval_role**: `{role}`\n"
+                    f"- **content_type**: `{c.content_type}` · **source_type**: `{c.source_type}`\n"
+                    f"- **card_id**: `{md.get('card_id') or '-'}` · "
+                    f"**card_type**: `{md.get('card_type') or '-'}` · "
+                    f"**card_type_match**: `{bool(md.get('card_type_match', False))}`\n"
+                    f"- **knowledge_card_boost**: `{md.get('knowledge_card_boost')}` · "
+                    f"**card_type_boost**: `{md.get('card_type_boost')}`\n"
+                    f"- **parent_raw_chunk_ids**: `{md.get('parent_raw_chunk_ids') or []}`\n"
                     f"- **file_name**: `{c.file_name}`\n"
                     f"- **uploaded_category**: `{c.uploaded_category}`\n"
-                    f"- **source_type**: `{c.source_type}`\n"
-                    f"- **content_type**: `{c.content_type}`\n"
                     f"- **section_title**: `{c.section_title or '-'}`\n"
                     f"- **display_date**: `{_display_date(c)}`\n"
                     f"- **primary_topic**: `{md.get('primary_topic') or '-'}`\n"
                     f"- **topic_tags**: `{md.get('topic_tags') or []}`\n"
+                    f"- **task_type**: `{md.get('task_type') or '-'}`\n"
                     f"- **todo_phase**: `{md.get('todo_phase') or '-'}`\n"
                     f"- **parser_format**: `{md.get('parser_format') or '-'}`\n"
                     f"- **time_range_display**: `{md.get('time_range_display') or '-'}`\n"
@@ -296,7 +386,7 @@ if st.button("검색 실행", type="primary", disabled=not query.strip()):
                 st.json(md_view, expanded=False)
 
     # -------------------- 탈락 결과 ------------------------------------------
-    dropped = [c for c in candidates if not c.passed_threshold]
+    dropped = [c for c in candidates_ui if not c.passed_threshold]
     if dropped:
         with st.expander(f"탈락 후보 보기 ({len(dropped)}개) — filter_reason 별 사유 확인", expanded=False):
             rows_d = []

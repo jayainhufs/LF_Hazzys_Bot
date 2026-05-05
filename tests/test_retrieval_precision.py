@@ -365,3 +365,119 @@ def test_mmr_reduces_same_file_repetition():
     assert "B.txt" in top_files or details.passed[1].file_name == "B.txt", (
         f"MMR 적용 시 상위 2개에 다른 파일이 섞여야 한다. 실제: {top_files}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 7) Task 6 회귀: knowledge_card 가 같은 파일의 raw chunk 보다 우선
+# ---------------------------------------------------------------------------
+def _make_kc_chunk(
+    *,
+    chunk_id: str,
+    file_name: str,
+    card_type: str,
+    score: float = 0.6,
+    primary_topic: str = "common",
+    uploaded_category: str = "guide",
+) -> RetrievedChunk:
+    md = {
+        "source_weight": float(settings.normalization_card_source_weight),
+        "uploaded_category": uploaded_category,
+        "file_name": file_name,
+        "source_type": "llm_normalized",
+        "content_type": "knowledge_card",
+        "card_id": chunk_id,
+        "card_type": card_type,
+        "primary_topic": primary_topic,
+        "topic_tags": [primary_topic] if primary_topic else [],
+        "parent_raw_chunk_ids": [],
+    }
+    return RetrievedChunk(
+        chunk_id=chunk_id,
+        document_id=f"doc_{file_name}",
+        file_name=file_name,
+        source_type="llm_normalized",
+        uploaded_category=uploaded_category,
+        section_title=None,
+        content_type="knowledge_card",
+        content=f"[knowledge_card content for {chunk_id}]",
+        score=float(score),
+        final_score=float(score),
+        metadata=md,
+    )
+
+
+def test_knowledge_card_outranks_raw_guide_when_both_indexed():
+    """같은 가이드 문서에서 raw guide chunk 와 workflow knowledge_card 가
+    동시에 색인되어 있으면 KnowledgeCard 가 1순위가 되어야 한다."""
+    chunks = [
+        _make_chunk(
+            chunk_id="raw_g",
+            file_name="LF 메타 셋팅 가이드.txt",
+            uploaded_category="guide",
+            source_type="guide",
+            content_type="text",
+            score=0.74,
+        ),
+        _make_kc_chunk(
+            chunk_id="kc_wf",
+            file_name="LF 메타 셋팅 가이드.txt",
+            card_type="workflow",
+            primary_topic="meta",
+            score=0.62,
+        ),
+    ]
+    r = _make_retriever(chunks)
+    details = r.retrieve_with_details(
+        "메타 캠페인 셋팅 가이드 알려줘",
+        top_k=5,
+        max_per_file=10,
+        with_parent_children=False,
+    )
+    assert details.passed
+    assert details.passed[0].chunk_id == "kc_wf", (
+        f"knowledge_card 가 1순위여야 한다. 실제 1순위: "
+        f"{details.passed[0].chunk_id} (final={details.passed[0].final_score:.4f})"
+    )
+    md_top = details.passed[0].metadata
+    assert md_top.get("retrieval_role") == "primary_card"
+    # 같은 파일의 raw chunk 는 raw_evidence 로 마킹된다.
+    raw_pass = next(c for c in details.passed if c.chunk_id == "raw_g")
+    assert raw_pass.metadata.get("retrieval_role") == "raw_evidence"
+
+
+def test_raw_fallback_remains_when_knowledge_card_below_threshold():
+    """knowledge_card 가 threshold 를 통과 못하면 raw chunk 가 fallback 으로 남는다."""
+    chunks = [
+        _make_chunk(
+            chunk_id="raw_g",
+            file_name="LF 가이드.txt",
+            uploaded_category="guide",
+            source_type="guide",
+            content_type="text",
+            score=0.70,
+        ),
+        # 매우 낮은 similarity → boost 가 붙어도 min_final 통과 못함
+        _make_kc_chunk(
+            chunk_id="kc_low",
+            file_name="LF 가이드.txt",
+            card_type="workflow",
+            score=0.05,
+        ),
+    ]
+    r = _make_retriever(chunks)
+    details = r.retrieve_with_details(
+        "정산 가이드 알려줘",
+        top_k=5,
+        min_similarity=0.30,
+        min_final=0.30,
+        max_per_file=10,
+        with_parent_children=False,
+    )
+    passed_ids = [c.chunk_id for c in details.passed]
+    assert "raw_g" in passed_ids, (
+        "knowledge_card 가 탈락하면 raw chunk 는 fallback 으로 남아야 한다."
+    )
+    raw_pass = next(c for c in details.passed if c.chunk_id == "raw_g")
+    # 같은 파일의 KC 가 후보(rank) 단계에 있었으므로 retrieval_role 은 raw_evidence.
+    role = raw_pass.metadata.get("retrieval_role")
+    assert role in {"raw_evidence", "raw_fallback"}

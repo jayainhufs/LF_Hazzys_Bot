@@ -620,9 +620,67 @@ LLM 기반 업무 지식카드 정규화는 raw Slack/Guide/Excel/메일/카카�
   (저장소 로드, 요약 분포, 필터, 검색, table dict, 한글 보존, 빈 저장소 처리 등) 를 추가했다.
 - 검색 우선순위 적용은 Task 6, QA 답변 반영은 Task 7 에서 진행한다.
 
-### Task 6~7 (예정)
+### Task 6 (완료) — 검색에서 `knowledge_card` 우선 retrieval 적용
 
-- Task 6: 검색에서 `knowledge_card` 우선 retrieval 적용
+- 검색 단계에서 `content_type=="knowledge_card"` / `source_type=="llm_normalized"`
+  chunk 를 raw chunk 보다 우선 사용한다. raw chunk 는 보조 근거 / fallback 용도로
+  계속 유지한다 (삭제하지 않음).
+- 새 설정 (`.env.example` / `src/config.py`):
+  - `PRIORITIZE_KNOWLEDGE_CARDS=true` (기본 ON, false 면 기존 점수 흐름과 동일)
+  - `KNOWLEDGE_CARD_CONTENT_BOOST=1.35`
+  - card_type 별 boost: `WORKFLOW_CARD_BOOST=1.30`, `CHECKLIST_CARD_BOOST=1.25`,
+    `FAQ_CARD_BOOST=1.20`, `DECISION_CARD_BOOST=1.20`,
+    `COMMUNICATION_TEMPLATE_BOOST=1.20`, `GLOSSARY_CARD_BOOST=1.10`
+  - `RAW_EVIDENCE_BOOST=0.85` (같은 source_file 의 raw chunk 점수 보정)
+  - `ENABLE_PARENT_RAW_EVIDENCE=true`, `PARENT_RAW_EVIDENCE_TOP_K=2`
+- `src/rag/reranker.py` 에 helper 추가:
+  - `is_knowledge_card_chunk(chunk_or_meta)` — content_type/source_type 둘 다 인식
+  - `card_type_boost_for(card_type, query_intent)` — card_type 별 spec boost 와
+    query intent 부합 시 추가 1.10x 부스트 반환
+  - `apply_knowledge_card_priority(candidates, query_metadata)` — rerank_simple
+    뒤에 호출되어 knowledge_card 점수 재가중 + 같은 파일 raw chunk 를
+    `raw_evidence` 로, 그 외 raw chunk 를 `raw_fallback` 으로 라벨링
+- 질문 의도(intent) 매핑은 `_INTENT_PROCEDURE` 에 "가이드", "체크리스트",
+  "셋팅", "세팅", "어떻게" 를 추가하고, `_INTENT_COMMUNICATION` ("문안",
+  "메일", "공유", "전달", "회신") 과 `_INTENT_GLOSSARY` ("용어", "무슨 뜻",
+  "정의") 를 신설했다. card_type → intent 매핑은 다음과 같다:
+  - workflow / checklist → procedure
+  - faq / decision → explanation
+  - communication_template → communication
+  - glossary → glossary
+  - issue → issue_lookup
+- `src/rag/retriever.py` 의 `retrieve_with_details` 가 rerank 직후
+  `apply_knowledge_card_priority` 를 호출하도록 연결했다. summary 에
+  `prioritize_knowledge_cards`, `knowledge_card_content_boost`,
+  `raw_evidence_boost`, `enable_parent_raw_evidence`,
+  `parent_raw_evidence_top_k` 와 함께 결과 단의 `knowledge_card_count` /
+  `raw_evidence_count` / `raw_fallback_count` 를 채운다.
+  `ENABLE_PARENT_RAW_EVIDENCE=false` 면 노출 단계에서
+  `parent_raw_chunk_ids` 가 빈 리스트로 마스킹된다.
+- 각 chunk metadata 에 진단 필드 `retrieval_role`
+  (`primary_card` / `raw_evidence` / `raw_fallback`),
+  `knowledge_card_boost`, `card_type_boost`, `card_type_match` 가 기록된다.
+- `app/pages/4_검색_테스트.py` UI 보강:
+  - 상단에 PRIORITIZE_KNOWLEDGE_CARDS / KC_CONTENT_BOOST /
+    RAW_EVIDENCE_BOOST / ENABLE_PARENT_RAW_EVIDENCE 표시
+  - 메트릭 행에 `knowledge_card`, `raw_evidence`, `raw_fallback` 카운트 추가
+  - 결과 테이블에 `retrieval_role`, `content_type`, `source_type`,
+    `card_id`, `card_type`, `card_type_match`, `kc_boost`, `card_type_boost`,
+    `parent_raw_chunk_ids`, `primary_topic`, `task_type`, `final_score` 컬럼 추가
+  - `content_type` 필터 (전체/knowledge_card/conversation/text/raw_table) 와
+    `card_type` 필터 (전체/workflow/checklist/issue/faq/decision/glossary/
+    communication_template) 추가
+  - 진단용 페이지이므로 Generation API 는 호출하지 않는다.
+- 기존 raw chunk 흐름은 삭제하지 않는다. KC 후보가 threshold 를 통과하지 못하면
+  raw chunk 가 fallback 으로 남는다 (`tests/test_retrieval_precision.py` 회귀 케이스 추가).
+- 외부 API 없이도 검증 가능하도록 `tests/test_knowledge_card_retrieval.py` 에
+  21 건 (helper 단위, intent 매칭, role 마킹, parent_raw_chunk_ids 보존,
+  card_type 별 우선순위 시나리오, retriever summary 카운트, prioritize 비활성화,
+  date/topic threshold 회귀) 을 추가했다.
+- QA 답변을 knowledge_card 중심으로 재구성하는 작업은 Task 7 에서 진행한다.
+
+### Task 7 (예정)
+
 - Task 7: QA prompt 에서 `knowledge_card` 중심 답변
 
 ---

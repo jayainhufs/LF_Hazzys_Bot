@@ -173,6 +173,21 @@ class Settings:
     normalization_card_source_weight: float = 1.25
     normalization_parent_raw_top_k: int = 3
 
+    # ----- KnowledgeCard 우선 retrieval (Task 6) -----
+    # PRIORITIZE_KNOWLEDGE_CARDS=true 면 reranker/retriever 가 knowledge_card chunk 를
+    # raw chunk 보다 우선 반환한다. raw chunk 는 fallback / parent evidence 용도로 유지.
+    prioritize_knowledge_cards: bool = True
+    knowledge_card_content_boost: float = 1.35
+    workflow_card_boost: float = 1.30
+    checklist_card_boost: float = 1.25
+    faq_card_boost: float = 1.20
+    decision_card_boost: float = 1.20
+    communication_template_boost: float = 1.20
+    glossary_card_boost: float = 1.10
+    raw_evidence_boost: float = 0.85
+    enable_parent_raw_evidence: bool = True
+    parent_raw_evidence_top_k: int = 2
+
     # ----- 카테고리 → raw 폴더 -----
     category_dirs: dict = field(default_factory=lambda: {
         "slack": "slack_manual",
@@ -322,6 +337,29 @@ class Settings:
         )
         s.normalization_parent_raw_top_k = _env_int(
             "NORMALIZATION_PARENT_RAW_TOP_K", s.normalization_parent_raw_top_k
+        )
+
+        # KnowledgeCard 우선 retrieval (Task 6)
+        s.prioritize_knowledge_cards = _env_bool(
+            "PRIORITIZE_KNOWLEDGE_CARDS", s.prioritize_knowledge_cards
+        )
+        s.knowledge_card_content_boost = _env_float(
+            "KNOWLEDGE_CARD_CONTENT_BOOST", s.knowledge_card_content_boost
+        )
+        s.workflow_card_boost = _env_float("WORKFLOW_CARD_BOOST", s.workflow_card_boost)
+        s.checklist_card_boost = _env_float("CHECKLIST_CARD_BOOST", s.checklist_card_boost)
+        s.faq_card_boost = _env_float("FAQ_CARD_BOOST", s.faq_card_boost)
+        s.decision_card_boost = _env_float("DECISION_CARD_BOOST", s.decision_card_boost)
+        s.communication_template_boost = _env_float(
+            "COMMUNICATION_TEMPLATE_BOOST", s.communication_template_boost
+        )
+        s.glossary_card_boost = _env_float("GLOSSARY_CARD_BOOST", s.glossary_card_boost)
+        s.raw_evidence_boost = _env_float("RAW_EVIDENCE_BOOST", s.raw_evidence_boost)
+        s.enable_parent_raw_evidence = _env_bool(
+            "ENABLE_PARENT_RAW_EVIDENCE", s.enable_parent_raw_evidence
+        )
+        s.parent_raw_evidence_top_k = _env_int(
+            "PARENT_RAW_EVIDENCE_TOP_K", s.parent_raw_evidence_top_k
         )
 
         return s

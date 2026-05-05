@@ -89,13 +89,22 @@ _QUERY_TOPIC_KEYWORDS: Dict[str, Tuple[str, ...]] = {
     "youtube": ("유튜브", "youtube", "구글 유튜브"),
 }
 
-_INTENT_PROCEDURE = ("순서", "프로세스", "어떻게 진행", "어떻게 해야", "방법", "단계")
+_INTENT_PROCEDURE = (
+    "순서", "프로세스", "어떻게 진행", "어떻게 해야", "방법", "단계",
+    "가이드", "체크리스트", "셋팅", "세팅", "어떻게",
+)
 _INTENT_TODO_LOOKUP = (
     "그날", "놓치면 안", "놓치면 안되는", "놓치면 안 되는", "뭐였어",
     "뭐 였어", "todo", "할 일",
 )
 _INTENT_EXPLANATION = ("설명", "차이", "이유", "원인", "왜")
-_INTENT_ISSUE_LOOKUP = ("이슈", "문제", "어려웠", "발생한", "발송 관련", "어땠어")
+_INTENT_ISSUE_LOOKUP = (
+    "이슈", "문제", "어려웠", "발생한", "발송 관련", "어땠어",
+    "안 됨", "안됨", "실패", "오류",
+)
+# Task 6: knowledge_card 우선순위를 위한 추가 intent
+_INTENT_COMMUNICATION = ("문안", "메일", "공유", "전달", "회신")
+_INTENT_GLOSSARY = ("용어", "무슨 뜻", "정의")
 
 
 def classify_query(query: str) -> Dict[str, bool]:
@@ -122,6 +131,10 @@ def _detect_intent(text: str) -> List[str]:
         out.append("explanation")
     if any(k in text for k in _INTENT_ISSUE_LOOKUP):
         out.append("issue_lookup")
+    if any(k in text for k in _INTENT_COMMUNICATION):
+        out.append("communication")
+    if any(k in text for k in _INTENT_GLOSSARY):
+        out.append("glossary")
     return out
 
 
@@ -482,6 +495,225 @@ def apply_diversity_penalty(
             file_seen[f] = f_count + 1
         if sec_key is not None:
             sec_seen[sec_key] = s_count + 1
+
+    candidates.sort(key=lambda x: x.final_score, reverse=True)
+    return candidates
+
+
+# ---------------------------------------------------------------------------
+# Task 6: KnowledgeCard 우선 retrieval helpers
+# ---------------------------------------------------------------------------
+# card_type → 매칭하는 query intent label
+_CARD_TYPE_INTENT_MAP: Dict[str, str] = {
+    "workflow": "procedure",
+    "checklist": "procedure",
+    "faq": "explanation",
+    "decision": "explanation",
+    "issue": "issue_lookup",
+    "communication_template": "communication",
+    "glossary": "glossary",
+}
+
+# card_type 매칭 시 추가 부스트 배수.
+# (intent 부합 카드는 spec boost 위에 1.10x 더 곱해서 강조한다.)
+_CARD_TYPE_INTENT_BONUS = 1.10
+
+
+def is_knowledge_card_chunk(
+    chunk_or_meta: Any,
+) -> bool:
+    """
+    chunk 가 KnowledgeCard 정규화 결과인지 판정.
+
+    - content_type == "knowledge_card"
+    - 또는 source_type == "llm_normalized"
+    위 두 조건 중 하나라도 만족하면 knowledge_card 로 본다.
+
+    `chunk_or_meta` 는 RetrievedChunk 또는 dict-like metadata 모두 허용.
+    """
+    if chunk_or_meta is None:
+        return False
+    md: Dict[str, Any]
+    content_type: str = ""
+    source_type: str = ""
+    if isinstance(chunk_or_meta, dict):
+        md = chunk_or_meta
+        content_type = str(md.get("content_type") or "").lower()
+        source_type = str(md.get("source_type") or "").lower()
+    else:
+        md = getattr(chunk_or_meta, "metadata", {}) or {}
+        content_type = (
+            getattr(chunk_or_meta, "content_type", None)
+            or md.get("content_type")
+            or ""
+        )
+        source_type = (
+            getattr(chunk_or_meta, "source_type", None)
+            or md.get("source_type")
+            or ""
+        )
+        content_type = str(content_type or "").lower()
+        source_type = str(source_type or "").lower()
+    if content_type == "knowledge_card":
+        return True
+    if source_type == "llm_normalized":
+        return True
+    return False
+
+
+def card_type_boost_for(
+    card_type: Optional[str],
+    query_intent: Optional[List[str]] = None,
+    *,
+    settings_obj: Optional[Any] = None,
+) -> Tuple[float, bool]:
+    """
+    knowledge_card 의 card_type 별 boost 와 query intent 부합 여부 반환.
+
+    동작:
+    - card_type 별 spec boost (settings 의 *_card_boost) 를 기본 적용한다.
+    - query_intent 와 card_type 이 매칭되면 추가로 1.10x 를 곱해 강조한다.
+    - card_type 이 비어 있거나 매핑에 없으면 (1.0, False) 반환.
+
+    Returns
+    -------
+    (boost, intent_match)
+    """
+    s = settings_obj or settings
+    ct = (card_type or "").strip().lower()
+    if not ct:
+        return 1.0, False
+
+    boost_map: Dict[str, float] = {
+        "workflow": float(getattr(s, "workflow_card_boost", 1.0) or 1.0),
+        "checklist": float(getattr(s, "checklist_card_boost", 1.0) or 1.0),
+        "faq": float(getattr(s, "faq_card_boost", 1.0) or 1.0),
+        "decision": float(getattr(s, "decision_card_boost", 1.0) or 1.0),
+        "communication_template": float(
+            getattr(s, "communication_template_boost", 1.0) or 1.0
+        ),
+        "glossary": float(getattr(s, "glossary_card_boost", 1.0) or 1.0),
+    }
+    boost = boost_map.get(ct, 1.0)
+
+    expected_intent = _CARD_TYPE_INTENT_MAP.get(ct)
+    intents = list(query_intent or [])
+    intent_match = bool(expected_intent and expected_intent in intents)
+    if intent_match:
+        boost *= _CARD_TYPE_INTENT_BONUS
+    return boost, intent_match
+
+
+def _normalized_file_keys(candidates: List[RetrievedChunk]) -> set:
+    """
+    knowledge_card chunk 가 포함된 source_file_hash / file_name 집합을 반환.
+
+    raw chunk 가 같은 파일 출신인지 판정할 때 사용한다.
+    """
+    keys: set = set()
+    for c in candidates or []:
+        if not is_knowledge_card_chunk(c):
+            continue
+        md = getattr(c, "metadata", {}) or {}
+        fh = md.get("source_file_hash") or md.get("file_hash")
+        fn = getattr(c, "file_name", None) or md.get("file_name")
+        if fh:
+            keys.add(f"hash:{fh}")
+        if fn:
+            keys.add(f"name:{fn}")
+    return keys
+
+
+def _chunk_belongs_to_normalized_file(
+    chunk: RetrievedChunk, normalized_keys: set
+) -> bool:
+    if not normalized_keys:
+        return False
+    md = getattr(chunk, "metadata", {}) or {}
+    fh = md.get("source_file_hash") or md.get("file_hash")
+    fn = getattr(chunk, "file_name", None) or md.get("file_name")
+    if fh and f"hash:{fh}" in normalized_keys:
+        return True
+    if fn and f"name:{fn}" in normalized_keys:
+        return True
+    return False
+
+
+def apply_knowledge_card_priority(
+    candidates: List[RetrievedChunk],
+    *,
+    query_metadata: Optional[Dict[str, Any]] = None,
+    settings_obj: Optional[Any] = None,
+) -> List[RetrievedChunk]:
+    """
+    rerank_simple 결과를 받은 뒤 knowledge_card 를 raw chunk 보다 우선시키는 후처리.
+
+    동작:
+    - PRIORITIZE_KNOWLEDGE_CARDS=false 면 metadata 진단 필드만 채우고 점수는 유지.
+    - PRIORITIZE_KNOWLEDGE_CARDS=true:
+        - knowledge_card chunk:
+            final_score *= KNOWLEDGE_CARD_CONTENT_BOOST * card_type_boost
+            retrieval_role = "primary_card"
+        - 같은 source_file 의 raw chunk:
+            final_score *= RAW_EVIDENCE_BOOST
+            retrieval_role = "raw_evidence"
+        - 그 외 raw chunk:
+            retrieval_role = "raw_fallback"
+    - 모든 chunk metadata 에 knowledge_card_boost / card_type_boost / card_type_match /
+      retrieval_role 진단 필드를 기록한다.
+
+    candidates 는 final_score 내림차순으로 재정렬되어 반환된다.
+    """
+    if not candidates:
+        return candidates
+
+    s = settings_obj or settings
+    enabled = bool(getattr(s, "prioritize_knowledge_cards", True))
+    kc_boost = float(getattr(s, "knowledge_card_content_boost", 1.0) or 1.0)
+    raw_evidence_boost = float(getattr(s, "raw_evidence_boost", 1.0) or 1.0)
+
+    qm = query_metadata or {}
+    query_intent = list(qm.get("query_intent") or [])
+
+    normalized_keys = _normalized_file_keys(candidates) if enabled else set()
+
+    for c in candidates:
+        md = getattr(c, "metadata", None)
+        if md is None:
+            md = {}
+            c.metadata = md
+        is_kc = is_knowledge_card_chunk(c)
+
+        if not enabled:
+            md.setdefault("knowledge_card_boost", 1.0)
+            md.setdefault("card_type_boost", 1.0)
+            md.setdefault("card_type_match", False)
+            if is_kc:
+                md.setdefault("retrieval_role", "primary_card")
+            else:
+                md.setdefault("retrieval_role", "raw_fallback")
+            continue
+
+        if is_kc:
+            ct = md.get("card_type")
+            ct_boost, intent_match = card_type_boost_for(
+                ct, query_intent, settings_obj=s
+            )
+            c.final_score = float(c.final_score or 0.0) * kc_boost * ct_boost
+            md["knowledge_card_boost"] = round(kc_boost, 6)
+            md["card_type_boost"] = round(ct_boost, 6)
+            md["card_type_match"] = bool(intent_match)
+            md["retrieval_role"] = "primary_card"
+        else:
+            md["knowledge_card_boost"] = 1.0
+            md["card_type_boost"] = 1.0
+            md["card_type_match"] = False
+            if _chunk_belongs_to_normalized_file(c, normalized_keys):
+                c.final_score = float(c.final_score or 0.0) * raw_evidence_boost
+                md["retrieval_role"] = "raw_evidence"
+                md["raw_evidence_boost"] = round(raw_evidence_boost, 6)
+            else:
+                md["retrieval_role"] = "raw_fallback"
 
     candidates.sort(key=lambda x: x.final_score, reverse=True)
     return candidates
