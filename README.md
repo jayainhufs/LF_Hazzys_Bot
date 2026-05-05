@@ -522,9 +522,34 @@ LLM 기반 업무 지식카드 정규화는 raw Slack/Guide/Excel/메일/카카�
   단위 테스트(파싱, cache hit/miss, 한글 보존, 카드 수 제한 등)를 추가했다.
 - 실제 pipeline 연결은 Task 4 에서, Streamlit 지식카드 관리 UI 는 Task 5 에서 진행한다.
 
-### Task 3~7 (예정)
+### Task 3 (완료) — Slack Thread normalizer + LLM 호출 + cache
 
-- Task 3: Slack Thread normalizer prompt + LLM 호출 + cache
+- Slack Thread txt 문서를 `KnowledgeCard` 로 변환하는 `SlackThreadKnowledgeNormalizer` 를 추가했다.
+  prompt 는 `src/normalization/normalization_prompt.py` 의
+  `build_slack_normalization_prompt()` 로 구성하며, prompt 버전은
+  `SLACK_NORMALIZER_PROMPT_VERSION = "slack_thread_v1"` 로 고정했다.
+- Slack Thread 는 공식 가이드가 아니라 실무 진행 로그 / 이슈 / 결정 / 다음 액션의
+  근거로 다룬다. 따라서 카드 타입은 `issue` / `decision` / `checklist` /
+  `communication_template` / `faq` 가 우선이고, `workflow` 는 반복 가능한 절차가
+  명확히 도출됐을 때만 사용한다.
+- Slack parser v2 가 추출한 `topic_tags` / `todo_phase` / `parser_format` 을
+  user prompt 에 명시해 카드 분리·토픽 추론을 돕고, 같은 메타는 결과
+  `KnowledgeCard.metadata` 에도 보존한다 (Task 6~7 의 retrieval / QA 단계에서 사용).
+- 익명화 가드: 사람 실명 / @멘션 / 정확한 시간을 출력하지 않고, 날짜는
+  "해당 업무일 / 다음 업무일 / 전일 / 월초 / 월말" 같은 업무 맥락 표현으로 바꾼다.
+  링크·이미지·파일명은 `[링크]` / `[이미지]` / `[파일]` 로 치환한다.
+- LLM 호출 / JSON 파싱(```json ``` fence 제거 포함) / cache 흐름은
+  Guide normalizer 의 helper 를 그대로 재사용해 코드 중복을 피했다.
+- 결과 저장 경로와 cache key 정책은 Guide 와 동일 (`file_hash + prompt_version
+  + model_name` cache 로 중복 호출을 방지). cache value 에는 `source_kind`
+  필드로 `slack_thread` 를 함께 기록한다.
+- 외부 API 없이도 검증 가능하도록 `tests/test_slack_normalizer.py` 에 mock 기반
+  단위 테스트(파싱, cache hit/miss, 한글 보존, 카드 수 제한, prompt 익명화 가드,
+  topic_tags 병합 등)를 추가했다.
+- 실제 pipeline 연결은 Task 4 에서, Streamlit 지식카드 관리 UI 는 Task 5 에서 진행한다.
+
+### Task 4~7 (예정)
+
 - Task 4: pipeline 에 `ENABLE_LLM_NORMALIZATION` 옵션 연결
 - Task 5: Streamlit 지식카드 관리 UI 추가
 - Task 6: 검색에서 `knowledge_card` 우선 retrieval 적용
