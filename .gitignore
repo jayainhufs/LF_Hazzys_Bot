@@ -31,6 +31,13 @@ storage/qa_logs/**/*
 storage/registry/**/*
 !storage/registry/.gitkeep
 
+# 내부 참조용 문서 (커밋 절대 금지)
+# docs_internal_template/ 은 공개 가능한 템플릿이므로 추적 가능.
+docs_internal/
+*.private.md
+INTERNAL_*.md
+PRIVATE_*.md
+
 # OS / IDE
 .DS_Store
 Thumbs.db
