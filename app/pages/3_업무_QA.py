@@ -98,6 +98,47 @@ if run:
     m3.metric("탈락 (dropped)", summary.get("dropped_count", 0))
     m4.metric("top_k", summary.get("top_k", k))
 
+    # Task 7: KnowledgeCard 중심 답변 진단 메트릭
+    answer_mode = result.get("answer_mode") or "default"
+    answer_format_label = result.get("answer_format_label") or "default"
+    primary_card_count = int(result.get("primary_card_count", 0))
+    raw_evidence_count = int(result.get("raw_evidence_count", 0))
+    raw_fallback_count = int(result.get("raw_fallback_count", 0))
+    primary_cards = result.get("primary_cards") or []
+
+    m5, m6, m7, m8 = st.columns(4)
+    m5.metric("answer_mode", answer_mode)
+    m6.metric("primary_card", primary_card_count)
+    m7.metric("raw_evidence", raw_evidence_count)
+    m8.metric("raw_fallback", raw_fallback_count)
+    st.caption(
+        f"answer_format_label=`{answer_format_label}` · "
+        f"answer_with_knowledge_cards=`{settings.answer_with_knowledge_cards}` · "
+        f"max_primary_cards=`{settings.max_primary_cards}` · "
+        f"max_raw_evidence_chunks=`{settings.max_raw_evidence_chunks}` · "
+        f"include_raw_evidence_appendix=`{settings.include_raw_evidence_appendix}` · "
+        f"template=`{result.get('knowledge_card_answer_template_version')}`"
+    )
+
+    if primary_cards:
+        with st.expander(
+            f"사용된 KnowledgeCard ({len(primary_cards)}개)", expanded=False
+        ):
+            rows = []
+            for i, c in enumerate(primary_cards, start=1):
+                md = c.metadata or {}
+                rows.append({
+                    "rank": i,
+                    "card_id": md.get("card_id") or "-",
+                    "card_type": md.get("card_type") or "-",
+                    "primary_topic": md.get("primary_topic") or "-",
+                    "task_type": md.get("task_type") or "-",
+                    "source_file_name": c.file_name,
+                    "final_score": round(c.final_score, 4),
+                    "title": md.get("title") or c.section_title or "-",
+                })
+            st.dataframe(rows, hide_index=True, use_container_width=True)
+
     qc = summary.get("query_class") or {}
     qc_tags = [name.replace("is_", "") for name, v in qc.items() if v]
     q_topics = summary.get("query_topics") or []
@@ -169,10 +210,17 @@ if run:
             else:
                 disp_date = "-"
 
+            role = md.get("retrieval_role") or "-"
+            role_badge = ""
+            if role == "primary_card":
+                role_badge = " · 🟣 PRIMARY CARD"
+            elif role == "raw_evidence":
+                role_badge = " · 🔵 RAW EVIDENCE"
             title = (
                 f"#{i} [{flag}] [{c.uploaded_category}/{c.source_type}/{c.content_type}] "
                 f"{c.file_name} · {c.section_title or '-'} "
                 f"(score={c.score:.4f}, final={c.final_score:.4f})"
+                f"{role_badge}"
             )
             with st.expander(title, expanded=(i == 1)):
                 st.markdown(
@@ -180,12 +228,23 @@ if run:
                     + (f" · filter_reason=`{c.filter_reason}`" if c.filter_reason else "")
                 )
                 st.markdown(
+                    f"- **retrieval_role**: `{role}` · "
+                    f"**content_type**: `{c.content_type}` · "
+                    f"**source_type**: `{c.source_type}`\n"
+                    f"- **card_id**: `{md.get('card_id') or '-'}` · "
+                    f"**card_type**: `{md.get('card_type') or '-'}` · "
+                    f"**card_type_match**: `{bool(md.get('card_type_match', False))}`\n"
+                    f"- **knowledge_card_boost**: `{md.get('knowledge_card_boost')}` · "
+                    f"**card_type_boost**: `{md.get('card_type_boost')}`\n"
+                    f"- **parent_raw_chunk_ids**: `{md.get('parent_raw_chunk_ids') or []}`"
+                )
+                st.markdown(
                     f"- file_name=`{c.file_name}` · "
-                    f"uploaded_category=`{c.uploaded_category}` · "
-                    f"source_type=`{c.source_type}`\n"
+                    f"uploaded_category=`{c.uploaded_category}`\n"
                     f"- section_title=`{c.section_title or '-'}` · "
                     f"display_date=`{disp_date}` · "
                     f"primary_topic=`{md.get('primary_topic') or '-'}` · "
+                    f"task_type=`{md.get('task_type') or '-'}` · "
                     f"todo_phase=`{md.get('todo_phase') or '-'}`\n"
                     f"- topic_tags=`{md.get('topic_tags') or []}` · "
                     f"parser_format=`{md.get('parser_format') or '-'}`\n"

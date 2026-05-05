@@ -23,7 +23,11 @@ from src.logger import get_logger
 from src.preprocessing.anonymizer import anonymize_text
 from src.rag.embedder import Embedder, get_default_embedder
 from src.rag.generator import Generator
-from src.rag.prompt_builder import build_qa_prompt
+from src.rag.prompt_builder import (
+    build_knowledge_card_answer_prompt,
+    build_qa_prompt,
+    split_chunks_by_retrieval_role,
+)
 from src.rag.query_rewriter import rewrite_query_if_enabled
 from src.rag.retriever import Retriever
 from src.schemas import QALog, RetrievedChunk
@@ -72,6 +76,18 @@ class QAPipeline:
                 "generation_skipped": True,
                 "skip_reason": "empty_question",
                 "retrieval_summary": {},
+                # Task 7: knowledge_card 중심 답변 진단 (호환용 default)
+                "answer_mode": "insufficient_evidence",
+                "answer_format_label": "default",
+                "primary_card_count": 0,
+                "raw_evidence_count": 0,
+                "raw_fallback_count": 0,
+                "primary_cards": [],
+                "raw_evidence": [],
+                "raw_fallback": [],
+                "knowledge_card_answer_template_version": (
+                    settings.knowledge_card_answer_template_version
+                ),
             }
 
         # 1) 정제
@@ -108,6 +124,13 @@ class QAPipeline:
         used_chunks: List[RetrievedChunk] = []
         used_model = ""
         prompt_chars = 0
+        answer_format_label = "default"
+
+        # Task 7: retrieval_role 기반 그룹 카운트 (knowledge_card 중심 답변용)
+        groups = split_chunks_by_retrieval_role(passed)
+        primary_card_count = len(groups["primary_cards"])
+        raw_evidence_count = len(groups["raw_evidence"])
+        raw_fallback_count = len(groups["raw_fallback"])
 
         if len(passed) < threshold_n:
             generation_skipped = True
@@ -116,6 +139,7 @@ class QAPipeline:
                 if not candidates
                 else "below_threshold"
             )
+            answer_mode = "insufficient_evidence"
             answer = INSUFFICIENT_EVIDENCE_MESSAGE
             log.info(
                 "QA: generation skipped (passed=%d / candidates=%d / threshold=%d)",
@@ -123,7 +147,23 @@ class QAPipeline:
             )
         else:
             # 5) prompt + generation
-            prompt, used_chunks = build_qa_prompt(q, passed, rewritten_query=rewritten)
+            if (
+                settings.answer_with_knowledge_cards
+                and primary_card_count > 0
+            ):
+                prompt, used_chunks, answer_format_label = (
+                    build_knowledge_card_answer_prompt(
+                        question=q,
+                        chunks=passed,
+                        rewritten_query=rewritten,
+                    )
+                )
+                answer_mode = "knowledge_card"
+            else:
+                prompt, used_chunks = build_qa_prompt(
+                    q, passed, rewritten_query=rewritten
+                )
+                answer_mode = "raw_fallback"
             prompt_chars = len(prompt or "")
             answer, used_model = self.generator.generate(prompt)
 
@@ -184,6 +224,18 @@ class QAPipeline:
                 "query_intent": summary.get("query_intent"),
                 "enable_date_filter": summary.get("enable_date_filter"),
                 "anonymize_output": summary.get("anonymize_output"),
+                # Task 7: knowledge_card 중심 답변 진단
+                "answer_mode": answer_mode,
+                "answer_format_label": answer_format_label,
+                "primary_card_count": primary_card_count,
+                "raw_evidence_count": raw_evidence_count,
+                "raw_fallback_count": raw_fallback_count,
+                "answer_with_knowledge_cards": bool(
+                    settings.answer_with_knowledge_cards
+                ),
+                "knowledge_card_answer_template_version": (
+                    settings.knowledge_card_answer_template_version
+                ),
             },
         )
         if save_log:
@@ -205,6 +257,18 @@ class QAPipeline:
             "skip_reason": skip_reason,
             "retrieval_summary": summary,
             "prompt_chars": prompt_chars,
+            # Task 7: knowledge_card 중심 답변 진단
+            "answer_mode": answer_mode,
+            "answer_format_label": answer_format_label,
+            "primary_card_count": primary_card_count,
+            "raw_evidence_count": raw_evidence_count,
+            "raw_fallback_count": raw_fallback_count,
+            "primary_cards": list(groups["primary_cards"]),
+            "raw_evidence": list(groups["raw_evidence"]),
+            "raw_fallback": list(groups["raw_fallback"]),
+            "knowledge_card_answer_template_version": (
+                settings.knowledge_card_answer_template_version
+            ),
         }
 
     # ------------------------------------------------------------------

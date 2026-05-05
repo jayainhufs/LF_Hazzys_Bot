@@ -297,6 +297,9 @@ def test_qa_pipeline_skips_generation_when_no_passing_chunks():
     assert result["generation_skipped"] is True
     assert fake_gen.calls == 0, "근거 부족 시 Gemini Generation 호출이 0이어야 한다"
     assert "근거가 부족" in result["answer"]
+    # Task 7: 근거 부족 시 answer_mode 는 insufficient_evidence
+    assert result.get("answer_mode") == "insufficient_evidence"
+    assert result.get("primary_card_count", 0) == 0
 
 
 def test_qa_pipeline_calls_generator_when_chunks_pass():
@@ -325,6 +328,9 @@ def test_qa_pipeline_calls_generator_when_chunks_pass():
     assert result["generation_skipped"] is False
     assert fake_gen.calls == 1
     assert result["answer"] == "[fake answer]"
+    # Task 7: raw chunk 만 있을 때 answer_mode 는 raw_fallback
+    assert result.get("answer_mode") == "raw_fallback"
+    assert result.get("primary_card_count", 0) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -443,6 +449,41 @@ def test_knowledge_card_outranks_raw_guide_when_both_indexed():
     # 같은 파일의 raw chunk 는 raw_evidence 로 마킹된다.
     raw_pass = next(c for c in details.passed if c.chunk_id == "raw_g")
     assert raw_pass.metadata.get("retrieval_role") == "raw_evidence"
+
+
+def test_qa_pipeline_uses_knowledge_card_mode_when_primary_card_present():
+    """primary_card 가 retrieval 결과에 있으면 answer_mode == 'knowledge_card'."""
+    chunks = [
+        _make_kc_chunk(
+            chunk_id="kc_wf",
+            file_name="meta_card.txt",
+            card_type="workflow",
+            primary_topic="meta",
+            score=0.62,
+        ),
+        _make_chunk(
+            chunk_id="raw_g",
+            file_name="meta_card.txt",
+            uploaded_category="guide",
+            source_type="guide",
+            content_type="text",
+            score=0.55,
+        ),
+    ]
+    fake_gen = FakeGenerator()
+    pipeline = QAPipeline(
+        retriever=_make_retriever(chunks),
+        generator=fake_gen,  # type: ignore[arg-type]
+        embedder=FakeEmbedder(),  # type: ignore[arg-type]
+    )
+    result = pipeline.ask(
+        "메타 캠페인 셋팅 가이드 알려줘",
+        top_k=5,
+        save_log=False,
+    )
+    assert result["generation_skipped"] is False
+    assert result["answer_mode"] == "knowledge_card"
+    assert result["primary_card_count"] >= 1
 
 
 def test_raw_fallback_remains_when_knowledge_card_below_threshold():

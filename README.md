@@ -679,9 +679,104 @@ LLM 기반 업무 지식카드 정규화는 raw Slack/Guide/Excel/메일/카카�
   date/topic threshold 회귀) 을 추가했다.
 - QA 답변을 knowledge_card 중심으로 재구성하는 작업은 Task 7 에서 진행한다.
 
-### Task 7 (예정)
+### Task 7 (완료) — QA prompt 에서 `knowledge_card` 중심 답변
 
-- Task 7: QA prompt 에서 `knowledge_card` 중심 답변
+- 검색된 chunk 중 `retrieval_role=="primary_card"` (또는 `content_type==
+  "knowledge_card"` / `source_type=="llm_normalized"`) 인 KnowledgeCard 를
+  답변의 1차 근거로 사용한다. raw chunk 는 보조 근거(`raw_evidence`) 또는
+  fallback(`raw_fallback`) 으로만 사용한다.
+- 새 설정 (`.env.example` / `src/config.py`):
+  - `ANSWER_WITH_KNOWLEDGE_CARDS=true` (기본 ON)
+  - `MAX_PRIMARY_CARDS=5` — prompt 에 포함할 primary_card 최대 개수
+  - `MAX_RAW_EVIDENCE_CHUNKS=3` — 보조 근거로 포함할 raw chunk 최대 개수
+  - `INCLUDE_RAW_EVIDENCE_APPENDIX=true` — raw evidence 보조 섹션 포함 여부
+  - `KNOWLEDGE_CARD_ANSWER_TEMPLATE_VERSION=knowledge_card_v1` —
+    답변 prompt 변경 추적용 라벨 (qa log 에 함께 기록)
+- `src/rag/prompt_builder.py` 에 helper 와 새 prompt builder 추가:
+  - `split_chunks_by_retrieval_role(chunks)` — `primary_cards` /
+    `raw_evidence` / `raw_fallback` 3 그룹으로 분리
+  - `format_knowledge_card_context` / `format_raw_evidence_appendix` —
+    sanitized 본문 + 카드/raw 메타데이터를 prompt 블록으로 직렬화
+  - `select_answer_format(primary_cards, question)` — card_type/질문 키워드를
+    바탕으로 답변 형식 (`default` / `communication_template` / `glossary`) 선택
+  - `build_knowledge_card_answer_prompt(question, chunks, ...)` — system
+    instruction + 원칙 + 답변 형식 + 주 근거 (KnowledgeCard) + 보조 근거 (Raw
+    Evidence) + 선택적 Raw Fallback 순으로 prompt 를 조립
+  - 기존 `build_qa_prompt` 는 유지하되, `ANSWER_WITH_KNOWLEDGE_CARDS=true` 이고
+    `primary_card` 가 있으면 새 함수로 라우팅한다 (호환).
+- 답변 형식은 card_type / 질문 의도에 맞춰 3 종으로 분기:
+  - **default** (workflow / checklist / issue / decision / faq): 결론 → 처리 순서/체크포인트
+    → 단계별 상세 → 실무 주의사항 → 체크리스트 → 참고 근거 → 불확실한 부분.
+  - **communication_template** (문안/메일/공유 질문): 결론 → 바로 사용할 수 있는 초안
+    → 문안 작성 포인트 → 주의사항 → 참고 근거 → 불확실한 부분.
+  - **glossary** (용어/정의 질문): 용어 정의 → 실무에서의 의미 → 헷갈리기 쉬운 점 →
+    관련 용어 → 참고 근거 → 불확실한 부분.
+- 답변 원칙 (`KNOWLEDGE_CARD_PRINCIPLES`):
+  - 주 근거 카드를 1차 근거로 사용. 보조 근거는 보강 용도, fallback 만 있으면 그
+    사실을 명시.
+  - 보조 근거가 카드와 충돌하면 "근거 간 차이가 있습니다" 라고 적는다.
+  - Guide 기반 workflow/checklist 카드는 공식 절차로 우선, Slack 기반 카드는
+    실무 히스토리/맥락으로 취급.
+  - 답변과 참고 근거 모두에 사람 실명 / @멘션 / 정확한 시간 / 원본 날짜를 그대로
+    옮기지 않는다 (역할 표현 + 업무일 라벨 사용).
+  - 참고 근거 섹션은 `[주 근거: KnowledgeCard]` 와 `[보조 근거: Raw Evidence]`
+    를 분리해 표기한다.
+- `src/rag/qa_pipeline.py` 가 `answer_mode` 를 결정해 result/QA log 에 기록한다.
+  - `knowledge_card`: `ANSWER_WITH_KNOWLEDGE_CARDS=true` 이고 통과 chunk 안에
+    primary_card 가 1개 이상 있을 때.
+  - `raw_fallback`: 통과 chunk 가 있지만 primary_card 가 없을 때 (기존 raw prompt
+    경로).
+  - `insufficient_evidence`: 통과 chunk 가 `MIN_RETRIEVED_CHUNKS` 미만 → 기존과
+    동일하게 generation skip + 안내 메시지.
+- QA log / pipeline result 에 추가되는 진단 필드: `answer_mode`,
+  `answer_format_label`, `primary_card_count`, `raw_evidence_count`,
+  `raw_fallback_count`, `answer_with_knowledge_cards`,
+  `knowledge_card_answer_template_version`. result dict 에는 사용 가능한
+  `primary_cards` / `raw_evidence` / `raw_fallback` 리스트도 함께 노출.
+- `app/pages/3_업무_QA.py` UI 보강:
+  - `answer_mode`, `primary_card_count`, `raw_evidence_count`,
+    `raw_fallback_count` 메트릭 행 추가.
+  - 사용된 KnowledgeCard 목록 expander 추가 (card_id / card_type / primary_topic
+    / task_type / source_file_name / final_score / title 컬럼).
+  - 참고 근거 expander 헤더에 `PRIMARY CARD` / `RAW EVIDENCE` 배지 표시.
+  - 본문에 `retrieval_role`, `card_id`, `card_type`, `card_type_match`,
+    `knowledge_card_boost`, `card_type_boost`, `parent_raw_chunk_ids`,
+    `task_type` 진단 필드 노출. raw 원문은 그대로 숨기고 sanitized preview 만 표시.
+- 외부 Gemini API 호출 없이 검증 가능하도록 `tests/test_knowledge_card_qa.py`
+  에 28 건 테스트 추가:
+  - `split_chunks_by_retrieval_role` 분리 동작 (4건)
+  - `select_answer_format` card_type/키워드 매칭 (4건)
+  - `build_knowledge_card_answer_prompt` 구조/순서/익명화/format 분기/raw appendix
+    토글/한글 보존/template version (10건)
+  - `build_qa_prompt` 라우팅 (3건)
+  - `QAPipeline` answer_mode 분류 + 진단 카운트 + UI 노출 (7건)
+- 기존 `tests/test_retrieval_precision.py` 에도 `answer_mode` 회귀 3건을 보강했다:
+  - 근거 부족 → `insufficient_evidence`
+  - raw chunk 만 통과 → `raw_fallback`
+  - primary_card 가 검색되면 → `knowledge_card`
+- Generation skip / threshold / 비식별화 등 기존 보호장치는 모두 그대로 유지.
+
+### Task 1~7 — LLM 기반 업무 지식카드 정규화 MVP 완성
+
+- Task 1: KnowledgeCard schema + NormalizationStore (cache, 저장 정책 기반)
+- Task 2: GuideKnowledgeNormalizer + Guide prompt + cache
+- Task 3: SlackThreadKnowledgeNormalizer + Slack prompt + cache
+- Task 4: ENABLE_LLM_NORMALIZATION 옵션을 ingest pipeline 에 연결,
+  KnowledgeCard → Chunk 변환 helper 와 graceful fallback 추가
+- Task 5: Streamlit 지식카드 관리 UI (`app/pages/7_지식카드_관리.py`)
+- Task 6: 검색 단계 knowledge_card 우선 retrieval / reranker 개선
+- Task 7: QA prompt 가 KnowledgeCard 를 1차 근거로 사용, raw 는 보조/fallback
+
+이로써 raw 자료 → 정규화 카드 생성 → 카드 우선 검색 → 카드 중심 답변까지 7 단계
+RAG 파이프라인이 모두 연결되었다. 실제 데이터로 end-to-end 동작 점검 시 권장 순서:
+1. `.env` 에 `ENABLE_LLM_NORMALIZATION=true` / `GOOGLE_API_KEY` 설정.
+2. Streamlit 의 `2_문서_색인` 페이지에서 Guide / Slack 파일을 ingest. 결과 메시지에서
+   `normalized_card_count` 가 0 보다 큰지 확인.
+3. `7_지식카드_관리` 페이지에서 생성된 KnowledgeCard JSON / Markdown 검토.
+4. `4_검색_테스트` 페이지에서 동일한 질문에 대해 `knowledge_card` /
+   `raw_evidence` / `raw_fallback` 분포가 기대대로 나오는지 확인.
+5. `3_업무_QA` 페이지에서 질문 시 `answer_mode==knowledge_card` 가 되는지,
+   답변과 참고 근거에 실명/멘션/원본 날짜가 노출되지 않는지 확인.
 
 ---
 

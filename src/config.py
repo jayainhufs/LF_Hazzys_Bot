@@ -188,6 +188,15 @@ class Settings:
     enable_parent_raw_evidence: bool = True
     parent_raw_evidence_top_k: int = 2
 
+    # ----- KnowledgeCard 중심 답변 (Task 7) -----
+    # ANSWER_WITH_KNOWLEDGE_CARDS=true 면 QA prompt 가 primary_card 를 1차 근거로 사용한다.
+    # raw evidence/fallback 은 보조 또는 fallback 용도로만 사용한다.
+    answer_with_knowledge_cards: bool = True
+    max_primary_cards: int = 5
+    max_raw_evidence_chunks: int = 3
+    include_raw_evidence_appendix: bool = True
+    knowledge_card_answer_template_version: str = "knowledge_card_v1"
+
     # ----- 카테고리 → raw 폴더 -----
     category_dirs: dict = field(default_factory=lambda: {
         "slack": "slack_manual",
@@ -360,6 +369,25 @@ class Settings:
         )
         s.parent_raw_evidence_top_k = _env_int(
             "PARENT_RAW_EVIDENCE_TOP_K", s.parent_raw_evidence_top_k
+        )
+
+        # KnowledgeCard 중심 답변 (Task 7)
+        s.answer_with_knowledge_cards = _env_bool(
+            "ANSWER_WITH_KNOWLEDGE_CARDS", s.answer_with_knowledge_cards
+        )
+        s.max_primary_cards = _env_int("MAX_PRIMARY_CARDS", s.max_primary_cards)
+        s.max_raw_evidence_chunks = _env_int(
+            "MAX_RAW_EVIDENCE_CHUNKS", s.max_raw_evidence_chunks
+        )
+        s.include_raw_evidence_appendix = _env_bool(
+            "INCLUDE_RAW_EVIDENCE_APPENDIX", s.include_raw_evidence_appendix
+        )
+        s.knowledge_card_answer_template_version = (
+            _env(
+                "KNOWLEDGE_CARD_ANSWER_TEMPLATE_VERSION",
+                s.knowledge_card_answer_template_version,
+            )
+            or s.knowledge_card_answer_template_version
         )
 
         return s
