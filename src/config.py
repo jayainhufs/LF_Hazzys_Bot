@@ -155,6 +155,24 @@ class Settings:
     anonymized_date_label: str = "업무일"
     anonymized_time_label: str = "시간대"
 
+    # ----- LLM 기반 지식카드 정규화 (Task 1: 설정만 준비) -----
+    enable_llm_normalization: bool = False
+    llm_normalization_model: str = "gemini-2.5-flash-lite"
+    normalization_output_dir: Path = field(
+        default_factory=lambda: PROJECT_ROOT / "data" / "processed" / "normalized"
+    )
+    normalization_cache_dir: Path = field(
+        default_factory=lambda: PROJECT_ROOT / "data" / "processed" / "normalized" / "cache"
+    )
+    normalization_max_chars_per_call: int = 18000
+    normalization_max_cards_per_file: int = 30
+    normalization_temperature: float = 0.1
+    normalization_use_anonymized_input: bool = True
+    normalization_save_json: bool = True
+    normalization_save_markdown: bool = True
+    normalization_card_source_weight: float = 1.25
+    normalization_parent_raw_top_k: int = 3
+
     # ----- 카테고리 → raw 폴더 -----
     category_dirs: dict = field(default_factory=lambda: {
         "slack": "slack_manual",
@@ -267,6 +285,43 @@ class Settings:
         )
         s.anonymized_time_label = (
             _env("ANONYMIZED_TIME_LABEL", s.anonymized_time_label) or s.anonymized_time_label
+        )
+
+        # LLM 기반 지식카드 정규화 (Task 1: 설정만 준비)
+        s.enable_llm_normalization = _env_bool(
+            "ENABLE_LLM_NORMALIZATION", s.enable_llm_normalization
+        )
+        s.llm_normalization_model = (
+            _env("LLM_NORMALIZATION_MODEL", s.llm_normalization_model)
+            or s.llm_normalization_model
+        )
+        if (raw := _env("NORMALIZATION_OUTPUT_DIR")):
+            s.normalization_output_dir = _resolve_path(raw)
+        if (raw := _env("NORMALIZATION_CACHE_DIR")):
+            s.normalization_cache_dir = _resolve_path(raw)
+        s.normalization_max_chars_per_call = _env_int(
+            "NORMALIZATION_MAX_CHARS_PER_CALL", s.normalization_max_chars_per_call
+        )
+        s.normalization_max_cards_per_file = _env_int(
+            "NORMALIZATION_MAX_CARDS_PER_FILE", s.normalization_max_cards_per_file
+        )
+        s.normalization_temperature = _env_float(
+            "NORMALIZATION_TEMPERATURE", s.normalization_temperature
+        )
+        s.normalization_use_anonymized_input = _env_bool(
+            "NORMALIZATION_USE_ANONYMIZED_INPUT", s.normalization_use_anonymized_input
+        )
+        s.normalization_save_json = _env_bool(
+            "NORMALIZATION_SAVE_JSON", s.normalization_save_json
+        )
+        s.normalization_save_markdown = _env_bool(
+            "NORMALIZATION_SAVE_MARKDOWN", s.normalization_save_markdown
+        )
+        s.normalization_card_source_weight = _env_float(
+            "NORMALIZATION_CARD_SOURCE_WEIGHT", s.normalization_card_source_weight
+        )
+        s.normalization_parent_raw_top_k = _env_int(
+            "NORMALIZATION_PARENT_RAW_TOP_K", s.normalization_parent_raw_top_k
         )
 
         return s

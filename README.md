@@ -490,6 +490,24 @@ MASK_LINKS=true
 
 ---
 
+## 17.3 LLM 기반 업무 지식카드 정규화 로드맵
+
+LLM 기반 업무 지식카드 정규화는 raw Slack/Guide/Excel/메일/카카오 자료를 바로 chunking 하기 전에,
+업무 절차/이슈/체크리스트/FAQ 같은 구조화된 `KnowledgeCard` 로 정리해 검색과 QA 품질을 높이기 위한 단계적 기능이다.
+
+현재 Task 1 에서는 실제 LLM 호출 없이 기반 구조만 추가했다.
+
+- `KnowledgeCard` schema 를 추가해 workflow / issue / checklist / faq / decision / glossary /
+  communication_template 형태의 정규화 결과를 담을 수 있게 했다.
+- `NormalizationStore` 를 추가해 정규화 결과 JSON/Markdown 을
+  `data/processed/normalized` 아래에 저장할 수 있게 했다.
+- 같은 raw 파일은 `file_hash + prompt_version + model_name` 기반 cache key 로 중복 호출을 방지할 예정이다.
+- 원본 raw 파일은 수정하지 않는다.
+- 실제 Guide / Slack Thread normalizer prompt 와 Gemini 호출은 Task 2~3 에서 구현 예정이다.
+- pipeline 연결, Streamlit 지식카드 관리 UI, knowledge_card 우선 retrieval, QA prompt 변경은 Task 4~7 에서 순차적으로 구현 예정이다.
+
+---
+
 ## 18. 자주 발생하는 오류와 해결 방법
 
 | 증상 | 원인 | 해결 |
