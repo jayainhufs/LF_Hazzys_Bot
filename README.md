@@ -589,9 +589,39 @@ LLM 기반 업무 지식카드 정규화는 raw Slack/Guide/Excel/메일/카카�
 - Streamlit 지식카드 관리 UI 노출은 Task 5, 검색 우선순위 적용은 Task 6,
   QA 답변 반영은 Task 7 에서 진행한다.
 
-### Task 5~7 (예정)
+### Task 5 (완료) — Streamlit 지식카드 관리 UI
 
-- Task 5: Streamlit 지식카드 관리 UI 추가
+- `app/pages/7_지식카드_관리.py` 를 추가해 생성된 `KnowledgeCard` JSON/Markdown 을
+  Streamlit 에서 read-only 로 확인할 수 있게 했다.
+- `src/normalization/card_viewer.py` 를 추가해 UI helper 를 분리했다.
+  - `list_normalized_json_files` / `list_normalized_markdown_files`
+  - `load_all_cards_from_store`
+  - `summarize_cards`
+  - `filter_cards`
+  - `card_to_display_dict`
+  - `markdown_for_card`
+- 페이지 상단에서 JSON 파일 수, Markdown 파일 수, 전체 카드 수, cache index 상태,
+  normalization output directory / json_dir / markdown_dir / cache_index 위치를 확인할 수 있다.
+- card_type / primary_topic / source_file_name / text query 로 카드 목록을 필터링할 수 있다.
+  text query 는 title, summary, when_to_use, steps, checkpoints, cautions, related_terms 를 대상으로 한다.
+- 카드 목록은 title, card_type, primary_topic, task_type, source_file_name, display_date,
+  checkpoints_count, steps_count, open_questions_count 컬럼으로 표시한다.
+- 카드 상세에서는 title, summary, card_type, primary_topic, topic_tags, task_type,
+  source_file_name, display_date, when_to_use, prerequisites, steps, checkpoints, cautions,
+  examples, related_terms, open_questions, evidence_spans, sanitized markdown preview 를 확인할 수 있다.
+- raw 원문은 표시하지 않고 `sanitized_markdown` / `card.to_markdown()` 중심으로 보여준다.
+  metadata 는 expander 안에서만 확인한다.
+- 안전한 관리 기능만 제공한다: 새로고침, 카드 JSON 다시 로드, 선택 카드 Markdown/JSON 다운로드.
+  삭제 / 강제 재정규화 버튼은 아직 제공하지 않는다.
+- `app/pages/2_문서_색인.py` 에 `ENABLE_LLM_NORMALIZATION` 현재 상태 표시와
+  Guide/Slack 정규화 안내, ingest 결과의 `normalized_card_count` /
+  `normalized_chunks_added` / `normalized_skipped_reason` 표시를 최소로 추가했다.
+- 외부 API 호출 없이 검증 가능하도록 `tests/test_knowledge_card_viewer.py` 에 helper 단위 테스트
+  (저장소 로드, 요약 분포, 필터, 검색, table dict, 한글 보존, 빈 저장소 처리 등) 를 추가했다.
+- 검색 우선순위 적용은 Task 6, QA 답변 반영은 Task 7 에서 진행한다.
+
+### Task 6~7 (예정)
+
 - Task 6: 검색에서 `knowledge_card` 우선 retrieval 적용
 - Task 7: QA prompt 에서 `knowledge_card` 중심 답변
 

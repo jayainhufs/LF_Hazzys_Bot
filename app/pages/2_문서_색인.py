@@ -31,7 +31,7 @@ st.caption(
 )
 
 # ----------------------------- 옵션 ----------------------------------------
-col1, col2, col3 = st.columns(3)
+col1, col2, col3, col4 = st.columns(4)
 with col1:
     enable_summary = st.toggle(
         "Excel 상세 요약 생성",
@@ -50,9 +50,26 @@ with col3:
         value=False,
         help="기본 색인 모드는 비용 절약형. 고급 모드에서는 Excel 상세 요약을 자동으로 켭니다.",
     )
+with col4:
+    enable_normalization = st.toggle(
+        "LLM 지식카드 정규화",
+        value=settings.enable_llm_normalization,
+        help=(
+            "Guide/Slack 파일 색인 시 KnowledgeCard 정규화를 함께 수행합니다. "
+            "Gemini API 호출 비용이 발생할 수 있습니다."
+        ),
+    )
 
 if advanced_mode:
     enable_summary = True
+
+if enable_normalization:
+    st.info(
+        "ENABLE_LLM_NORMALIZATION 이 켜져 있습니다. "
+        "Guide/Slack 파일은 raw chunk 색인 후 KnowledgeCard 정규화를 함께 수행합니다."
+    )
+else:
+    st.caption("LLM 지식카드 정규화: OFF (기존 raw ingest 흐름만 실행)")
 
 # ----------------------------- 대상 파일 미리보기 --------------------------
 files = discover_files()
@@ -66,7 +83,7 @@ with st.expander("대상 파일 목록", expanded=False):
             st.write(f"- [{item['uploaded_category']}] {p.relative_to(settings.project_root)}")
 
 # ----------------------------- 실행 ----------------------------------------
-need_api = settings.embedding_provider == "gemini" or enable_summary
+need_api = settings.embedding_provider == "gemini" or enable_summary or enable_normalization
 if st.button("새 파일만 색인 실행", type="primary", disabled=not files):
     if need_api and not settings.has_api_key():
         st.error(
@@ -83,7 +100,7 @@ if st.button("새 파일만 색인 실행", type="primary", disabled=not files):
 
     progress = st.progress(0.0, text="시작 중...")
     log_box = st.container()
-    indexed = skipped = failed = chunks_total = 0
+    indexed = skipped = failed = chunks_total = normalized_total = 0
     results: list[IngestResult] = []
 
     n = len(files)
@@ -103,15 +120,25 @@ if st.button("새 파일만 색인 실행", type="primary", disabled=not files):
             file_registry=registry,
             excel_summarizer=summarizer,
             enable_excel_summary=enable_summary,
+            enable_llm_normalization=enable_normalization,
             skip_if_indexed=skip_indexed,
         )
         results.append(res)
         if res.status == "indexed":
             indexed += 1
             chunks_total += res.chunks_added
+            normalized_total += res.normalized_chunks_added
+            norm_bits = ""
+            if enable_normalization:
+                norm_bits = (
+                    f" normalized_cards={res.normalized_card_count} "
+                    f"normalized_chunks={res.normalized_chunks_added}"
+                )
+                if res.normalized_skipped_reason:
+                    norm_bits += f" ({res.normalized_skipped_reason})"
             log_box.success(
                 f"[OK] [{uploaded_category}] {res.file_name} | chunks={res.chunks_added} "
-                f"sections={res.sections_count} summary={res.summary_count}"
+                f"sections={res.sections_count} summary={res.summary_count}{norm_bits}"
             )
         elif res.status == "skipped":
             skipped += 1
@@ -124,7 +151,7 @@ if st.button("새 파일만 색인 실행", type="primary", disabled=not files):
     progress.empty()
     st.success(
         f"완료: indexed={indexed} · skipped={skipped} · failed={failed} · "
-        f"신규 chunk={chunks_total}"
+        f"신규 chunk={chunks_total} · normalized chunk={normalized_total}"
     )
 
     snap = tracker.snapshot()
