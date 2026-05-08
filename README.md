@@ -35,6 +35,15 @@ Notes](#security--privacy-notes) 참고).
 - 사용자가 자신의 업무 문서(가이드, 메신저 스레드 텍스트, 메일/카톡 내보내기, Excel 등)를
   로컬에 적재하면, 자연어 질문에 대해 단계별 절차 / 체크리스트 / 참고 근거를 한국어로
   답변하는 RAG 챗봇이다.
+- **핵심 차별점 — LLM-based Document Normalization**
+  - raw 업무 문서를 그대로 embedding 하는 단순 RAG 구조가 아니라, ingestion 단계에서 LLM 으로
+    한 번 더 구조화하여 검색과 QA 에 적합한 **Normalized Document** (정규화 문서) 를 생성한 뒤
+    이를 1차 근거로 활용한다.
+  - **Normalized Document** 는 업무 절차 (workflow), 체크리스트 (checklist), 이슈 (issue),
+    FAQ, 공유 문안 (communication_template), 용어 (glossary), 운영 판단 (decision) 등으로
+    구조화된 문서 단위다.
+  - **Raw Chunk** 는 원문 기반 보조 근거 또는 fallback 으로 함께 유지되어, 정규화 결과만으로
+    답변이 어렵거나 LLM 정규화가 OFF 인 경우에도 RAG 가 동작한다.
 - 설계 원칙
   - **외부 Vector DB 미사용**: Pinecone / Weaviate / Qdrant Cloud / Supabase 등 모두 사용하지
     않는다. 색인 결과는 로컬 [ChromaDB](https://github.com/chroma-core/chroma) (`./storage/
@@ -135,26 +144,48 @@ PDF / 이미지 OCR / Hybrid Retrieval / 자동 폴더 watcher 등은 현재 MVP
 
 ## 4. LLM-based Document Normalization 아키텍처
 
-raw 텍스트를 그대로 chunking / 임베딩하는 대신, LLM 으로 한 번 더 구조화해
-**`NormalizedDocument`** 형태의 업무 지식 단위로 정리한다. 검색과 답변은 Normalized
-Document 단위를 1차 근거로 사용하고, raw chunk 는 보조 근거 또는 fallback 으로만 활용한다.
+**LLM-based Document Normalization** 은 raw 업무 문서를 LLM 으로 절차 / 체크리스트 / 이슈 /
+FAQ / 공유 문안 등 검색·QA 친화적 구조로 정규화하는 **ingestion-time preprocessing 단계**다.
+raw chunk 색인 흐름과는 **별도의 병렬 branch** 로 동작한다 — raw chunk 를 대체하는 것이
+아니라, 같은 입력으로부터 별도의 Normalized Document 를 생성해 **함께** 색인한다.
 
 ```
-[raw 텍스트 chunk]                    ←  기존 RAG 색인 흐름은 그대로 유지
-        ↓
-[(옵션) LLM-based Document Normalization]
-  ├─ Guide       → workflow / checklist / faq / glossary / communication_template / decision
-  └─ Slack-style → issue / decision / checklist / communication_template / faq / workflow
-        ↓
-[NormalizationStore  ./data/processed/normalized/{json,markdown}]
-  └─ file_hash + prompt_version + model_name 기반 cache 로 중복 호출 방지
-        ↓
-[ChromaDB 에 추가 색인 — content_type=normalized_document / source_type=llm_normalized]
-        ↓
-[Retriever / Reranker 가 Normalized Document 우선 boost → retrieval_role 라벨링]
-        ↓
-[QA Prompt Builder — Normalized Document 중심 답변 형식 (default / communication_template / glossary)]
+[Parser / Cleaning / Anonymization 결과]
+        │
+        ├──────────────────── (병렬) ────────────────────┐
+        ▼                                                ▼
+[Raw Chunk 생성]                  [(옵션) LLM-based Document Normalization]
+        │                                  │
+        │                                  ├─ Guide       → workflow / checklist / faq /
+        │                                  │                glossary / communication_template /
+        │                                  │                decision
+        │                                  └─ Slack-style → issue / decision / checklist /
+        │                                                   communication_template / faq /
+        │                                                   workflow
+        │                                  ↓
+        │                  [NormalizationStore  ./data/processed/normalized/{json,markdown}]
+        │                  file_hash + prompt_version + model_name cache → 중복 호출 방지
+        │                                  ↓
+        │                  [Normalized Document Chunk 생성
+        │                   (content_type=normalized_document, source_type=llm_normalized)]
+        │                                  │
+        └──────────────────────┬───────────┘
+                               ▼
+                       [Embedding + ChromaDB 색인]
+                               ▼
+   [Retriever / Reranker — Normalized Document 우선 boost → retrieval_role 라벨링]
+                               ▼
+   [QA Prompt Builder — Normalized Document 중심 답변 (raw evidence/fallback 보조)]
 ```
+
+핵심 원칙
+
+- **raw chunk 는 그대로 유지된다.** Normalized Document 생성 여부와 무관하게 원문 chunk 색인
+  흐름은 항상 동작한다 (`ENABLE_LLM_NORMALIZATION=false` 일 때는 raw 흐름만 동작).
+- **Normalized Document 는 1차 근거.** 검색 / 답변 단계에서 Normalized Document 가 raw chunk
+  보다 우선 사용된다.
+- **Raw Chunk 는 보조 근거 / fallback.** Normalized Document 가 없거나 부족할 때 raw evidence
+  로 보강하거나, 정규화가 OFF 일 때 fallback 으로 사용된다.
 
 `NormalizedDocument` 의 type 은 다음 중 하나다.
 
@@ -171,10 +202,11 @@ Document 단위를 1차 근거로 사용하고, raw chunk 는 보조 근거 또�
 `display_date`, `parent_raw_chunk_ids` 등이 함께 저장되어 검색 우선순위와 답변 근거 분리에
 사용된다.
 
-> **Backward compatibility**: 기존에 색인된 데이터는 `content_type="knowledge_card"` /
+> **Backward compatibility**: 과거에 색인된 데이터는 `content_type="knowledge_card"` /
 > `card_id` / `card_type` 으로 저장되어 있을 수 있다. retriever / reranker / qa pipeline
 > 은 신규 (`normalized_document` / `normalized_document_id` / `normalized_document_type`)
-> 와 legacy 키를 모두 인식한다. 새로 색인되는 chunk 는 신규 표준을 사용한다.
+> 와 legacy 키를 모두 인식하므로 기존 저장 데이터를 다시 색인하지 않아도 그대로 동작한다.
+> 새로 색인되는 chunk 는 신규 표준을 사용한다.
 
 ---
 
@@ -195,18 +227,21 @@ LLM-based Document Normalization MVP 는 7 단계로 구현되어 있다 (모두
 검색 / 답변 단계의 핵심 진단 필드
 
 - `retrieval_role` ∈ {`primary_card`, `raw_evidence`, `raw_fallback`}
-  (라벨 문자열 자체는 호환을 위해 유지된다.)
+  → `primary_card` 는 Normalized Document 1차 근거를 가리키는 코드 레벨 라벨이다.
+  외부 시스템 / 로깅 / 테스트 호환을 위해 라벨 문자열 자체는 변경하지 않는다.
 - `answer_mode` ∈ {`knowledge_card`, `raw_fallback`, `insufficient_evidence`}
-  (라벨 문자열 자체는 호환을 위해 유지된다.)
-- `normalized_document_id` / `normalized_document_type` (legacy: `card_id` / `card_type`)
+  → `knowledge_card` 는 "Normalized Document 중심 답변 모드" 를 의미하는 코드 레벨 라벨이며,
+  외부 호환을 위해 문자열 자체는 변경하지 않는다.
+- `normalized_document_id` / `normalized_document_type` (legacy: `card_id` / `card_type`
+  도 같은 값으로 함께 채워진다)
 - `primary_topic` / `task_type`
 - `normalized_document_boost`, `normalized_document_type_boost`,
   `normalized_document_type_match`
 - `parent_raw_chunk_ids`, `final_score`
 
 이 필드들은 Streamlit 의 검색 테스트 / QA 페이지에서 그대로 확인할 수 있다. 기존
-`knowledge_card_boost` / `card_type_boost` / `card_type_match` 등 legacy 키도 동일한 값으로
-함께 채워진다.
+`knowledge_card_boost` / `card_type_boost` / `card_type_match` 등 legacy 진단 키도 동일한
+값으로 함께 채워져, 기존 UI / 로깅 / 외부 분석 코드가 깨지지 않는다.
 
 ---
 
@@ -307,15 +342,15 @@ Windows 추가 주의사항
 
 ## 9. Streamlit 페이지 설명
 
-| 페이지 | 역할 |
+| 페이지 (UI 표시명) | 역할 |
 | --- | --- |
-| `1_문서_업로드` | 카테고리 선택 후 파일 업로드 → `data/raw/<카테고리>/` 에 저장 |
-| `2_문서_색인` | 새 파일 색인 / Excel 한국어 요약 옵션 / LLM-based Document Normalization 결과 카운트 표시 |
-| `3_업무_QA` | 질문 → 검색 → 답변. `answer_mode`, primary Normalized Document 목록, retrieval_role 진단 표시 |
-| `4_검색_테스트` | 답변 생성 없이 retrieval 결과만 확인. content_type / normalized_document_type 필터 제공 |
-| `5_API_상태확인` | Gemini API Key / 모델 사용 가능 여부 점검 |
-| `6_Excel_요약관리` | Excel 시트별 한국어 업무 요약 재생성 / 캐시 확인 |
-| `7_지식카드_관리` | (UI 표시명: "정규화 문서 관리") 정규화된 Normalized Document JSON / Markdown 을 read-only 로 확인 |
+| `1_문서_업로드` (문서 업로드) | 카테고리 선택 후 파일 업로드 → `data/raw/<카테고리>/` 에 저장 |
+| `2_문서_색인` (문서 색인) | 새 파일 색인 / Excel 한국어 요약 옵션 / LLM 기반 문서 정규화 결과 카운트 표시 |
+| `3_업무_QA` (업무 QA) | 질문 → 검색 → 답변. `answer_mode`, primary Normalized Document 목록, retrieval_role 진단 표시 |
+| `4_검색_테스트` (검색 테스트) | 답변 생성 없이 retrieval 결과만 확인. content_type / normalized_document_type 필터 제공 |
+| `5_API_상태확인` (API 상태 확인) | Gemini API Key / 모델 사용 가능 여부 점검 |
+| `6_Excel_요약관리` (Excel 요약 관리) | Excel 시트별 한국어 업무 요약 재생성 / 캐시 확인 |
+| `7_지식카드_관리` (정규화 문서 관리) | 생성된 Normalized Document JSON / Markdown 을 read-only 로 확인. 파일명은 한글 경로 호환을 위해 유지하되, UI 표시명은 "정규화 문서 관리" 로 변경되어 있다 |
 
 CLI 도 함께 제공한다.
 
@@ -345,14 +380,19 @@ python scripts/reset_vector_db.py           # ChromaDB / processed 초기화 (da
   - `MIN_RETRIEVED_CHUNKS` 미만이면 Gemini Generation 을 호출하지 않고 "근거 부족" 안내 메시지
     를 반환한다 (비용 절감).
 - 답변
-  - `ANSWER_WITH_NORMALIZED_DOCUMENTS=true` (legacy: `ANSWER_WITH_KNOWLEDGE_CARDS=true`)
-    이고 통과 chunk 안에 primary Normalized Document 가 있으면 Normalized Document 중심
-    prompt 로 답변한다 (`answer_mode=knowledge_card` 라벨은 호환을 위해 유지).
-  - 그 외에는 기존 raw chunk prompt 로 동작한다 (`answer_mode=raw_fallback`).
+  - `ANSWER_WITH_NORMALIZED_DOCUMENTS=true` 이고 통과 chunk 안에 primary Normalized
+    Document 가 있으면 **Normalized Document 중심 prompt** 로 답변한다 (코드 레벨 라벨은
+    `answer_mode=knowledge_card` — 외부 호환 목적으로 문자열 자체는 변경하지 않는다).
+  - primary Normalized Document 가 없거나 정규화가 OFF 면 **raw chunk prompt** 로 fallback
+    한다 (`answer_mode=raw_fallback`).
+  - 통과 chunk 자체가 부족하면 Gemini 호출 없이 "근거 부족" 메시지를 반환한다
+    (`answer_mode=insufficient_evidence`).
   - Normalized Document type 에 따라 답변 형식이 default / communication_template /
     glossary 중 하나로 분기된다.
   - 답변과 참고 근거 모두에서 사람 실명 / @멘션 / 정확한 시간 / 원본 날짜를 노출하지 않도록
     prompt 와 비식별화 가드가 작동한다.
+  - legacy 환경변수 `ANSWER_WITH_KNOWLEDGE_CARDS` / `MAX_PRIMARY_CARDS` 도 fallback 으로
+    인식되므로 기존 `.env` 가 그대로 동작한다.
 
 ---
 
@@ -478,7 +518,8 @@ python -m pytest tests/test_retrieval_precision.py           -v
 - 임베딩 모델 A/B 테스트 자동화
 - retrieval hit rate / answer groundedness 지표화
 - 사용자 피드백 기반 evaluation
-- 카카오 / 메일 / Excel 영역으로 LLM-based Document Normalization 확장
+- LLM-based Document Normalization 확장 (현재 Guide / Slack 스레드 → 향후 카카오 / 메일 /
+  Excel 영역으로 확대)
 
 ---
 
