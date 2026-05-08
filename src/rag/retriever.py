@@ -24,12 +24,15 @@ from src.rag.embedder import Embedder, get_default_embedder
 from src.rag.reranker import (
     DEFAULT_CATEGORY_BOOST,
     apply_diversity_penalty,
-    apply_knowledge_card_priority,
+    apply_normalized_document_priority,
     classify_query,
     extract_query_metadata,
-    is_knowledge_card_chunk,
+    is_normalized_document_chunk,
     rerank_simple,
 )
+# legacy alias — 기존 코드 호환
+apply_knowledge_card_priority = apply_normalized_document_priority
+is_knowledge_card_chunk = is_normalized_document_chunk
 from src.schemas import RetrievedChunk
 from src.storage.vector_store import VectorStore
 from src.utils.cost_utils import tracker
@@ -145,13 +148,18 @@ class Retriever:
             "date_mismatch_penalty": float(settings.date_mismatch_penalty),
             "topic_match_boost": float(settings.topic_match_boost),
             "topic_mismatch_penalty": float(settings.topic_mismatch_penalty),
-            # KnowledgeCard 우선 retrieval 진단 (Task 6)
+            # Normalized Document 우선 retrieval 진단 (Task 6)
+            # 신규 표준 키
+            "prioritize_normalized_documents": bool(settings.prioritize_knowledge_cards),
+            "normalized_document_content_boost": float(settings.knowledge_card_content_boost),
+            "normalized_document_count": 0,
+            # legacy 호환 키 (기존 UI / 테스트 호환)
             "prioritize_knowledge_cards": bool(settings.prioritize_knowledge_cards),
             "knowledge_card_content_boost": float(settings.knowledge_card_content_boost),
+            "knowledge_card_count": 0,
             "raw_evidence_boost": float(settings.raw_evidence_boost),
             "enable_parent_raw_evidence": bool(settings.enable_parent_raw_evidence),
             "parent_raw_evidence_top_k": int(settings.parent_raw_evidence_top_k),
-            "knowledge_card_count": 0,
             "raw_evidence_count": 0,
             "raw_fallback_count": 0,
             # 비식별화 상태 (UI 노출용)
@@ -191,9 +199,10 @@ class Retriever:
             query_metadata=query_meta,
         )
 
-        # 1-b) KnowledgeCard 우선 retrieval (Task 6)
-        # PRIORITIZE_KNOWLEDGE_CARDS=true 면 knowledge_card chunk 가 raw 보다 위로 올라온다.
-        ranked = apply_knowledge_card_priority(
+        # 1-b) Normalized Document 우선 retrieval (Task 6)
+        # PRIORITIZE_NORMALIZED_DOCUMENTS=true 면 Normalized Document chunk 가
+        # raw chunk 보다 위로 올라온다. (legacy: PRIORITIZE_KNOWLEDGE_CARDS)
+        ranked = apply_normalized_document_priority(
             ranked,
             query_metadata=query_meta,
         )
@@ -246,10 +255,11 @@ class Retriever:
         passed = passed[:k]
 
         # 6) parent_raw_evidence 진단 처리 (Task 6)
-        # ENABLE_PARENT_RAW_EVIDENCE=false 면 knowledge_card 의 parent_raw_chunk_ids 를 metadata 에서 비워둔다.
+        # ENABLE_PARENT_RAW_EVIDENCE=false 면 Normalized Document 의 parent_raw_chunk_ids 를
+        # metadata 에서 비워둔다.
         if not settings.enable_parent_raw_evidence:
             for c in passed:
-                if is_knowledge_card_chunk(c):
+                if is_normalized_document_chunk(c):
                     md = c.metadata or {}
                     md["parent_raw_chunk_ids"] = []
                     c.metadata = md
@@ -269,7 +279,7 @@ class Retriever:
                 raw_fallback_count += 1
             else:
                 # role 이 비어 있으면 추정값으로 보정
-                if is_knowledge_card_chunk(c):
+                if is_normalized_document_chunk(c):
                     kc_count += 1
                 else:
                     raw_fallback_count += 1
@@ -280,6 +290,9 @@ class Retriever:
         details.summary["candidate_count"] = len(ranked)
         details.summary["passed_count"] = len(passed)
         details.summary["dropped_count"] = len(ranked) - len(passed)
+        # 신규 표준 키
+        details.summary["normalized_document_count"] = kc_count
+        # legacy 호환 키
         details.summary["knowledge_card_count"] = kc_count
         details.summary["raw_evidence_count"] = raw_evidence_count
         details.summary["raw_fallback_count"] = raw_fallback_count

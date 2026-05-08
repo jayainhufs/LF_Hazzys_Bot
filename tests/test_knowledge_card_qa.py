@@ -1,9 +1,16 @@
 """
 test_knowledge_card_qa.py
 =========================
-Task 7: KnowledgeCard 중심 QA prompt / qa_pipeline answer_mode 단위 테스트.
+Task 7: Normalized Document 중심 QA prompt / qa_pipeline answer_mode 단위 테스트.
 
 외부 Gemini API 호출 없이 fake generator/embedder/vector store 로 검증한다.
+
+명칭 변경 노트
+----------------
+- prompt 헤더는 "## 주 근거 (Normalized Document)" 로 바뀌었다.
+- 기존 import 명 (``KNOWLEDGE_CARD_*`` / ``build_knowledge_card_answer_prompt``) 는
+  legacy alias 로 동작한다.
+- ``answer_mode`` 라벨 ``knowledge_card`` 자체는 호환을 위해 그대로 유지한다.
 """
 from __future__ import annotations
 
@@ -305,9 +312,9 @@ def test_prompt_has_primary_card_section_before_raw_evidence():
     )
     assert label == "default"
     # 섹션 헤더 (markdown ##) 기준으로 위치 비교
-    assert "## 주 근거 (KnowledgeCard)" in prompt
+    assert "## 주 근거 (Normalized Document)" in prompt
     assert "## 보조 근거 (Raw Evidence)" in prompt
-    primary_idx = prompt.index("## 주 근거 (KnowledgeCard)")
+    primary_idx = prompt.index("## 주 근거 (Normalized Document)")
     evidence_idx = prompt.index("## 보조 근거 (Raw Evidence)")
     assert primary_idx < evidence_idx, (
         "주 근거 섹션이 보조 근거 섹션보다 먼저 등장해야 한다"
@@ -381,7 +388,7 @@ def test_prompt_falls_back_to_raw_when_no_primary_card():
         question="가이드 알려줘", chunks=raw
     )
     assert label == "raw_fallback"
-    assert "## 주 근거 (KnowledgeCard)" not in prompt
+    assert "## 주 근거 (Normalized Document)" not in prompt
     assert any(c.chunk_id == "r1" for c in used)
 
 
@@ -451,7 +458,7 @@ def test_prompt_principles_block_is_included():
 def test_build_qa_prompt_routes_to_knowledge_card_when_primary_exists():
     cards = [_make_kc_chunk(chunk_id="kc1", file_name="x.txt", card_type="workflow")]
     prompt, _used = build_qa_prompt("셋팅 가이드", cards)
-    assert "## 주 근거 (KnowledgeCard)" in prompt
+    assert "## 주 근거 (Normalized Document)" in prompt
 
 
 def test_build_qa_prompt_uses_legacy_when_no_primary_card():
@@ -461,7 +468,7 @@ def test_build_qa_prompt_uses_legacy_when_no_primary_card():
         )
     ]
     prompt, _used = build_qa_prompt("정산 가이드", raw)
-    assert "## 주 근거 (KnowledgeCard)" not in prompt
+    assert "## 주 근거 (Normalized Document)" not in prompt
     # 기존 7섹션 레거시 prompt 는 "## 6. 참고 근거" 가 포함된다.
     assert "## 6. 참고 근거" in prompt
 
@@ -470,7 +477,7 @@ def test_build_qa_prompt_disabled_uses_legacy_even_with_card(monkeypatch):
     monkeypatch.setattr(settings, "answer_with_knowledge_cards", False)
     cards = [_make_kc_chunk(chunk_id="kc1", file_name="x.txt", card_type="workflow")]
     prompt, _used = build_qa_prompt("셋팅 가이드", cards)
-    assert "## 주 근거 (KnowledgeCard)" not in prompt
+    assert "## 주 근거 (Normalized Document)" not in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -501,7 +508,7 @@ def test_pipeline_answer_mode_knowledge_card_when_primary_card_present(monkeypat
     assert fake_gen.calls == 1
     assert result["answer_mode"] == "knowledge_card"
     assert result["primary_card_count"] >= 1
-    assert "## 주 근거 (KnowledgeCard)" in fake_gen.last_prompt
+    assert "## 주 근거 (Normalized Document)" in fake_gen.last_prompt
     # template version 로그
     assert (
         result["knowledge_card_answer_template_version"]
@@ -529,7 +536,7 @@ def test_pipeline_answer_mode_raw_fallback_when_no_primary_card(monkeypatch):
     assert result["answer_mode"] == "raw_fallback"
     assert result["primary_card_count"] == 0
     assert result["raw_fallback_count"] >= 1
-    assert "## 주 근거 (KnowledgeCard)" not in fake_gen.last_prompt
+    assert "## 주 근거 (Normalized Document)" not in fake_gen.last_prompt
 
 
 def test_pipeline_answer_mode_insufficient_evidence_when_no_chunks_pass():
@@ -584,7 +591,7 @@ def test_pipeline_disabled_setting_uses_legacy_prompt(monkeypatch):
     pipeline, fake_gen = _make_pipeline(chunks)
     result = pipeline.ask("셋팅 가이드", top_k=5, save_log=False)
     assert result["answer_mode"] == "raw_fallback"
-    assert "## 주 근거 (KnowledgeCard)" not in fake_gen.last_prompt
+    assert "## 주 근거 (Normalized Document)" not in fake_gen.last_prompt
 
 
 def test_pipeline_empty_question_returns_insufficient_evidence_mode():

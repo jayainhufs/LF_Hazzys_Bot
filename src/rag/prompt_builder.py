@@ -19,12 +19,19 @@ RAG 답변용 프롬프트 빌더.
 - 참고 근거 표기에 file_name / uploaded_category / source_type / section_title /
   chunk_index / final_score 를 모두 포함한다.
 
-Task 7 (knowledge_card 중심 답변):
+Task 7 (Normalized Document 중심 답변):
 - retrieval_role == "primary_card" 인 chunk 를 1차 근거로 사용한다.
 - raw_evidence 는 보조 근거 섹션으로만 사용한다.
 - raw_fallback 은 primary_card 가 없을 때 fallback 으로만 사용한다.
-- card_type (workflow / checklist / issue / decision / faq / communication_template /
-  glossary) 에 따라 답변 구조를 다르게 유도한다.
+- normalized_document_type (workflow / checklist / issue / decision / faq /
+  communication_template / glossary) 에 따라 답변 구조를 다르게 유도한다.
+
+명칭 변경 노트:
+- ``build_knowledge_card_answer_prompt`` 는 ``build_normalized_document_answer_prompt``
+  로 명칭이 변경되었다. 기존 import 호환을 위해 legacy alias 를 유지한다.
+- 프롬프트 텍스트 안에서도 "KnowledgeCard" 표현은 "Normalized Document" 로
+  교체되었다. 단, 메타데이터 키 이름 (예: ``card_id`` / ``card_type``) 은
+  기존 색인 데이터와의 호환을 위해 신규 / legacy 양쪽 키를 모두 인식한다.
 """
 from __future__ import annotations
 
@@ -191,13 +198,13 @@ def build_qa_prompt(
     -------
     (prompt_text, used_chunks)
 
-    Task 7: ANSWER_WITH_KNOWLEDGE_CARDS=true 이고 primary_card 가 있으면
-    knowledge_card 중심 prompt 로 라우팅한다.
+    Task 7: ANSWER_WITH_NORMALIZED_DOCUMENTS (legacy: ANSWER_WITH_KNOWLEDGE_CARDS)
+    = true 이고 primary_card 가 있으면 Normalized Document 중심 prompt 로 라우팅한다.
     """
     if settings.answer_with_knowledge_cards:
         groups = split_chunks_by_retrieval_role(chunks)
         if groups["primary_cards"]:
-            prompt, used, _mode = build_knowledge_card_answer_prompt(
+            prompt, used, _mode = build_normalized_document_answer_prompt(
                 question=question,
                 chunks=chunks,
                 rewritten_query=rewritten_query,
@@ -285,56 +292,60 @@ def build_no_context_answer_prompt(question: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Task 7: KnowledgeCard 중심 답변 helpers
+# Task 7: Normalized Document 중심 답변 helpers
 # ---------------------------------------------------------------------------
-KNOWLEDGE_CARD_SYSTEM_INSTRUCTION = (
+NORMALIZED_DOCUMENT_SYSTEM_INSTRUCTION = (
     "너는 광고대행사 퍼포먼스마케팅 업무를 도와주는 한국어 업무지원 챗봇이다. "
-    "아래 컨텍스트의 '주 근거 (KnowledgeCard)' 섹션에 적힌 정규화된 카드를 1차 근거로 답변하라. "
-    "'보조 근거 (Raw Evidence)' 섹션은 카드 내용을 보강할 때만 참고하고, 카드와 충돌하면 "
+    "아래 컨텍스트의 '주 근거 (Normalized Document)' 섹션에 적힌 정규화 문서를 1차 근거로 답변하라. "
+    "'보조 근거 (Raw Evidence)' 섹션은 정규화 문서를 보강할 때만 참고하고, 정규화 문서와 충돌하면 "
     "'근거 간 차이가 있습니다' 라고 분명히 적어라. "
     "근거에 없는 절차/수치/결정사항을 만들거나 일반 상식으로 채우지 말라. "
     "근거가 부족하면 답변의 마지막 섹션에서 '현재 근거만으로는 확실하지 않다' 고 분명히 밝혀라. "
-    "Guide 기반 workflow/checklist 카드는 공식 절차 근거로 우선 반영하고, "
-    "Slack 기반 카드(예: source_category=slack)는 실무 히스토리/맥락으로 취급하라. "
+    "Guide 기반 workflow/checklist 정규화 문서는 공식 절차 근거로 우선 반영하고, "
+    "Slack 기반 정규화 문서(예: source_category=slack)는 실무 히스토리/맥락으로 취급하라. "
     "사람 실명, @멘션, '오전 10:02' 같은 정확한 시간, 원본 날짜를 답변에 그대로 옮기지 말라. "
     "사람 이름은 작성자 / 검토자 / 담당자 / 광고주 / 매체 담당자 / 재무팀 같은 역할 표현으로 바꾸고, "
     "날짜는 '해당 업무일', '전일', '다음 업무일', '월초', '월말' 같은 업무 맥락 표현을 우선 사용하라."
 )
 
-KNOWLEDGE_CARD_PRINCIPLES = """## 답변 원칙 (KnowledgeCard 중심)
-1. '주 근거 (KnowledgeCard)' 의 카드를 1차 근거로 사용한다.
-2. '보조 근거 (Raw Evidence)' 는 카드 내용을 보강하거나 구체 수치/사례를 보여줄 때만 사용한다.
-3. 보조 근거가 주 근거 카드와 충돌하면 단정하지 말고 "근거 간 차이가 있습니다" 라고 적는다.
+NORMALIZED_DOCUMENT_PRINCIPLES = """## 답변 원칙 (Normalized Document 중심)
+1. '주 근거 (Normalized Document)' 의 정규화 문서를 1차 근거로 사용한다.
+2. '보조 근거 (Raw Evidence)' 는 정규화 문서를 보강하거나 구체 수치/사례를 보여줄 때만 사용한다.
+3. 보조 근거가 주 근거 정규화 문서와 충돌하면 단정하지 말고 "근거 간 차이가 있습니다" 라고 적는다.
 4. 주 근거가 비어 있고 'Raw Fallback' 만 있을 때는 그 사실을 7번/마지막 섹션에 분명히 적고
-   "정규화된 카드가 아직 없어 raw 근거에 의존했습니다" 라고 명시한다.
+   "정규화 문서가 아직 없어 raw 근거에 의존했습니다" 라고 명시한다.
 5. 근거에 없는 절차/수치/결정사항을 추정하거나 일반 상식으로 채우지 말 것.
 6. 사람 실명, @멘션, "오전 10:02" 같은 정확한 시간, "2026년 4월 29일" 같은 원본 날짜를
    답변과 참고 근거 모두에 그대로 옮기지 말 것.
 7. 이름은 "작성자/검토자/담당자/광고주/매체 담당자/재무팀" 같은 역할 표현,
    날짜는 "해당 업무일/전일/다음 업무일/월초/월말" 같은 업무 맥락 표현을 우선 사용한다.
-8. Guide 기반 workflow/checklist 카드는 공식 절차 근거로 우선 인용한다.
-9. Slack 기반 카드는 공식 가이드가 아니라 실무 히스토리/맥락으로 취급한다.
-10. 답변 마지막 '참고 근거' 섹션은 KnowledgeCard 와 Raw Evidence 를 분리해 표기한다."""
+8. Guide 기반 workflow/checklist 정규화 문서는 공식 절차 근거로 우선 인용한다.
+9. Slack 기반 정규화 문서는 공식 가이드가 아니라 실무 히스토리/맥락으로 취급한다.
+10. 답변 마지막 '참고 근거' 섹션은 Normalized Document 와 Raw Evidence 를 분리해 표기한다."""
+
+# legacy alias — 기존 import 유지
+KNOWLEDGE_CARD_SYSTEM_INSTRUCTION = NORMALIZED_DOCUMENT_SYSTEM_INSTRUCTION
+KNOWLEDGE_CARD_PRINCIPLES = NORMALIZED_DOCUMENT_PRINCIPLES
 
 # 기본 답변 형식 (workflow / checklist / issue / decision / faq)
 DEFAULT_ANSWER_FORMAT = """반드시 아래 형식을 그대로 따라 한국어로 답변하라.
 
 ## 1. 결론
-- 질문에 대한 핵심 답변 1~3줄. 주 근거 카드의 summary / when_to_use 를 우선 반영하라.
+- 질문에 대한 핵심 답변 1~3줄. 주 근거 정규화 문서의 summary / when_to_use 를 우선 반영하라.
 
 ## 2. 업무 처리 순서 또는 핵심 체크포인트
-- 카드의 steps 또는 checkpoints 를 1) 2) 3) 형식으로 정리한다.
-- workflow 카드: 처리 순서 중심.
-- checklist 카드: "놓치면 안 되는 항목" 중심.
-- issue / decision / faq 카드: 핵심 판단 기준 / 결론 중심.
+- 정규화 문서의 steps 또는 checkpoints 를 1) 2) 3) 형식으로 정리한다.
+- workflow 정규화 문서: 처리 순서 중심.
+- checklist 정규화 문서: "놓치면 안 되는 항목" 중심.
+- issue / decision / faq 정규화 문서: 핵심 판단 기준 / 결론 중심.
 
 ## 3. 단계별 상세 설명
 - 각 단계에서 해야 할 일, 보는 곳, 클릭/입력해야 할 항목, 판단 기준을 자세히 설명.
 - 보조 근거(Raw Evidence)는 구체 수치/사례 보강 용도로만 인용한다.
 
 ## 4. 실무 주의사항
-- 카드의 cautions / 충돌하는 보조 근거 / 흔한 실수 중심.
-- 일반 상식 추정은 적지 말 것. 카드/근거에 없는 내용은 7번 섹션으로 보낼 것.
+- 정규화 문서의 cautions / 충돌하는 보조 근거 / 흔한 실수 중심.
+- 일반 상식 추정은 적지 말 것. 정규화 문서/근거에 없는 내용은 7번 섹션으로 보낼 것.
 
 ## 5. 바로 사용할 수 있는 체크리스트
 - [ ] 항목1
@@ -342,11 +353,11 @@ DEFAULT_ANSWER_FORMAT = """반드시 아래 형식을 그대로 따라 한국어
 - [ ] 항목3
 
 ## 6. 참고 근거
-- 아래 형식으로 주 근거(KnowledgeCard) 와 보조 근거(Raw Evidence) 를 분리해 표기한다.
+- 아래 형식으로 주 근거(Normalized Document) 와 보조 근거(Raw Evidence) 를 분리해 표기한다.
 
-[주 근거: KnowledgeCard]
+[주 근거: Normalized Document]
 - title:
-- card_type:
+- normalized_document_type:
 - primary_topic:
 - source_file_name:
 - display_date:
@@ -370,20 +381,20 @@ COMMUNICATION_ANSWER_FORMAT = """반드시 아래 형식을 그대로 따라 한
 - 어떤 상황에 어떤 톤으로 어떤 핵심 메시지를 전달해야 하는지 1~3줄.
 
 ## 2. 바로 사용할 수 있는 초안
-- 카드의 steps / examples / template 본문을 정리해 사용 가능한 문안 초안을 제시한다.
+- 정규화 문서의 steps / examples / template 본문을 정리해 사용 가능한 문안 초안을 제시한다.
 - 사람 실명, @멘션, 정확한 시간, 원본 날짜는 빼고 역할 표현 / 업무일 라벨로 대체한다.
 
 ## 3. 문안 작성 포인트
 - 어떤 정보를 반드시 포함해야 하는지, 어떤 표현을 피해야 하는지.
-- 카드의 cautions / when_to_use / prerequisites 를 우선 반영.
+- 정규화 문서의 cautions / when_to_use / prerequisites 를 우선 반영.
 
 ## 4. 주의사항
 - 광고주/매체/내부 공유 톤 차이, 금액/일정 표기 시 주의점, 익명화 원칙 등.
 
 ## 5. 참고 근거
-[주 근거: KnowledgeCard]
+[주 근거: Normalized Document]
 - title:
-- card_type:
+- normalized_document_type:
 - primary_topic:
 - source_file_name:
 - display_date:
@@ -396,28 +407,28 @@ COMMUNICATION_ANSWER_FORMAT = """반드시 아래 형식을 그대로 따라 한
 - chunk_index 또는 parent_raw_chunk_ids:
 
 ## 6. 불확실한 부분
-- 카드/근거에 명시되지 않은 항목, 추가 확인이 필요한 내용을 정직하게 적는다."""
+- 정규화 문서/근거에 명시되지 않은 항목, 추가 확인이 필요한 내용을 정직하게 적는다."""
 
 # 용어 설명 (glossary) 형식
 GLOSSARY_ANSWER_FORMAT = """반드시 아래 형식을 그대로 따라 한국어로 답변하라.
 
 ## 1. 용어 정의
-- 카드의 title / summary / definition 을 1~3줄로 정리.
+- 정규화 문서의 title / summary / definition 을 1~3줄로 정리.
 
 ## 2. 실무에서의 의미
 - 광고대행사 퍼포먼스마케팅 업무에서 이 용어가 어떻게 쓰이는지.
-- 카드의 examples / when_to_use 를 우선 반영.
+- 정규화 문서의 examples / when_to_use 를 우선 반영.
 
 ## 3. 헷갈리기 쉬운 점
-- 비슷한 용어와의 차이, 흔히 잘못 쓰이는 사례 (카드 cautions 기반).
+- 비슷한 용어와의 차이, 흔히 잘못 쓰이는 사례 (정규화 문서 cautions 기반).
 
 ## 4. 관련 용어
-- 카드의 related_terms 를 그대로 옮긴다.
+- 정규화 문서의 related_terms 를 그대로 옮긴다.
 
 ## 5. 참고 근거
-[주 근거: KnowledgeCard]
+[주 근거: Normalized Document]
 - title:
-- card_type:
+- normalized_document_type:
 - primary_topic:
 - source_file_name:
 - display_date:
@@ -440,14 +451,17 @@ def split_chunks_by_retrieval_role(
     retrieval_role 기준으로 chunk 를 3 그룹으로 나눈다.
 
     - primary_cards: retrieval_role=="primary_card" 또는
-                     content_type=="knowledge_card" 또는
-                     source_type=="llm_normalized"
+                     content_type=="normalized_document"  (신규)
+                     또는 content_type=="knowledge_card"   (legacy)
+                     또는 source_type=="llm_normalized"
     - raw_evidence:  retrieval_role=="raw_evidence"
     - raw_fallback:  retrieval_role=="raw_fallback" 또는 그 외 raw chunk
 
     Returns
     -------
     {"primary_cards": [...], "raw_evidence": [...], "raw_fallback": [...]}
+
+    NOTE: 반환 dict 키 ``primary_cards`` 는 기존 호출 호환을 위해 유지한다.
     """
     primary: List[RetrievedChunk] = []
     raw_ev: List[RetrievedChunk] = []
@@ -459,7 +473,7 @@ def split_chunks_by_retrieval_role(
         stype = (c.source_type or "").lower()
         is_card = (
             role == "primary_card"
-            or ctype == "knowledge_card"
+            or ctype in {"normalized_document", "knowledge_card"}
             or stype == "llm_normalized"
         )
         if is_card:
@@ -485,10 +499,12 @@ def _format_card_metadata_block(
     else:
         body_src = card.content or ""
     body = truncate_to_chars(body_src or "", max_chars_per_chunk)
+    nd_id = md.get("normalized_document_id") or md.get("card_id") or "-"
+    nd_type = md.get("normalized_document_type") or md.get("card_type") or "-"
     return (
-        f"[KC #{idx}]\n"
-        f"- card_id: {md.get('card_id') or '-'}\n"
-        f"- card_type: {md.get('card_type') or '-'}\n"
+        f"[ND #{idx}]\n"
+        f"- normalized_document_id: {nd_id}\n"
+        f"- normalized_document_type: {nd_type}\n"
         f"- title: {md.get('title') or card.section_title or '-'}\n"
         f"- primary_topic: {md.get('primary_topic') or '-'}\n"
         f"- topic_tags: {md.get('topic_tags') or []}\n"
@@ -527,13 +543,16 @@ def _format_raw_evidence_block(
     )
 
 
-def format_knowledge_card_context(
+def format_normalized_document_context(
     cards: List[RetrievedChunk],
     *,
     max_total_chars: int,
     max_chars_per_chunk: int,
 ) -> Tuple[List[RetrievedChunk], List[str]]:
-    """primary_cards 를 prompt block 형태로 직렬화한다 (총 char 예산 내)."""
+    """primary_cards (Normalized Document) 를 prompt block 형태로 직렬화한다.
+
+    총 char 예산 내에서만 직렬화하며, 첫 카드는 예산을 초과해도 최소 1개는 넣는다.
+    """
     used: List[RetrievedChunk] = []
     blocks: List[str] = []
     total = 0
@@ -547,6 +566,10 @@ def format_knowledge_card_context(
         blocks.append(block)
         total += len(block)
     return used, blocks
+
+
+# legacy alias — 기존 import 유지
+format_knowledge_card_context = format_normalized_document_context
 
 
 def format_raw_evidence_appendix(
@@ -574,7 +597,8 @@ def select_answer_format(
     question: str,
 ) -> Tuple[str, str]:
     """
-    primary_cards 의 card_type 와 질문 의도를 기반으로 적절한 답변 형식을 선택.
+    primary_cards 의 normalized_document_type (legacy: card_type) 와 질문 의도를
+    기반으로 적절한 답변 형식을 선택.
 
     Returns
     -------
@@ -584,11 +608,13 @@ def select_answer_format(
     types: List[str] = []
     for c in primary_cards or []:
         md = c.metadata or {}
-        ct = str(md.get("card_type") or "").lower()
+        # 신규 우선, 없으면 legacy fallback
+        ct = str(
+            md.get("normalized_document_type") or md.get("card_type") or ""
+        ).lower()
         if ct:
             types.append(ct)
 
-    # 우선순위: glossary > communication_template > 기본
     if "glossary" in types or any(k in q for k in ("용어", "무슨 뜻", "정의")):
         return GLOSSARY_ANSWER_FORMAT, "glossary"
     if "communication_template" in types or any(
@@ -598,7 +624,7 @@ def select_answer_format(
     return DEFAULT_ANSWER_FORMAT, "default"
 
 
-def build_knowledge_card_answer_prompt(
+def build_normalized_document_answer_prompt(
     question: str,
     chunks: List[RetrievedChunk],
     rewritten_query: Optional[str] = None,
@@ -609,7 +635,11 @@ def build_knowledge_card_answer_prompt(
     include_raw_evidence_appendix: Optional[bool] = None,
 ) -> Tuple[str, List[RetrievedChunk], str]:
     """
-    KnowledgeCard 중심 QA prompt 를 생성한다.
+    Normalized Document 중심 QA prompt 를 생성한다.
+
+    파라미터 ``max_primary_cards`` 는 신규 명칭으로는
+    ``max_primary_normalized_documents`` 에 해당한다. 기존 호출 호환을 위해
+    파라미터 이름은 유지한다.
 
     Returns
     -------
@@ -651,7 +681,7 @@ def build_knowledge_card_answer_prompt(
 
     answer_format, format_label = select_answer_format(primary_cards, question)
 
-    # char 예산 분배: card 70%, raw evidence 25%, fallback 5%
+    # char 예산 분배: 정규화 문서 70%, raw evidence 25%, fallback 5%
     card_budget = int(max_total * 0.70)
     raw_budget = int(max_total * 0.25) if include_raw_app else 0
     fallback_budget = max_total - card_budget - raw_budget
@@ -660,7 +690,7 @@ def build_knowledge_card_answer_prompt(
     per_raw_max = max(500, raw_budget // max(1, len(raw_evidence) or 1))
     per_fb_max = max(400, fallback_budget // max(1, len(raw_fallback) or 1))
 
-    used_cards, card_blocks = format_knowledge_card_context(
+    used_cards, card_blocks = format_normalized_document_context(
         primary_cards,
         max_total_chars=card_budget,
         max_chars_per_chunk=per_card_max,
@@ -677,7 +707,6 @@ def build_knowledge_card_answer_prompt(
     used_raw_fb: List[RetrievedChunk] = []
     raw_fb_blocks: List[str] = []
     if include_raw_app and raw_fallback and fallback_budget > 0:
-        # fallback 은 짧게만 노출. 보통 primary 가 있으면 사용 안 함.
         used_raw_fb, raw_fb_blocks = format_raw_evidence_appendix(
             raw_fallback[: max(1, n_raw)],
             max_total_chars=fallback_budget,
@@ -685,9 +714,9 @@ def build_knowledge_card_answer_prompt(
         )
 
     parts: List[str] = []
-    parts.append(KNOWLEDGE_CARD_SYSTEM_INSTRUCTION)
+    parts.append(NORMALIZED_DOCUMENT_SYSTEM_INSTRUCTION)
     parts.append("")
-    parts.append(KNOWLEDGE_CARD_PRINCIPLES)
+    parts.append(NORMALIZED_DOCUMENT_PRINCIPLES)
     parts.append("")
     parts.append("## 사용자 질문")
     parts.append((question or "").strip())
@@ -704,19 +733,20 @@ def build_knowledge_card_answer_prompt(
     parts.append(answer_format)
 
     parts.append("")
-    parts.append("## 주 근거 (KnowledgeCard) — 1차 근거")
+    parts.append("## 주 근거 (Normalized Document) — 1차 근거")
     parts.append(
-        "이 섹션의 카드를 답변의 1차 근거로 사용하라. 카드에 명시된 steps / "
-        "checkpoints / cautions / examples 만 인용하고, 카드에 없는 내용을 만들지 말 것."
+        "이 섹션의 정규화 문서를 답변의 1차 근거로 사용하라. 정규화 문서에 명시된 "
+        "steps / checkpoints / cautions / examples 만 인용하고, 정규화 문서에 없는 "
+        "내용을 만들지 말 것."
     )
     parts.append(f"(총 {len(used_cards)}개)")
     parts.extend(card_blocks)
 
     if include_raw_app and used_raw_ev:
         parts.append("")
-        parts.append("## 보조 근거 (Raw Evidence) — 카드 보강 용도")
+        parts.append("## 보조 근거 (Raw Evidence) — 정규화 문서 보강 용도")
         parts.append(
-            "주 근거 카드를 보강하거나 구체 수치/사례를 보여줄 때만 참고하라. "
+            "주 근거 정규화 문서를 보강하거나 구체 수치/사례를 보여줄 때만 참고하라. "
             "주 근거와 충돌하면 '근거 간 차이가 있습니다' 라고 명시하라."
         )
         parts.append(f"(총 {len(used_raw_ev)}개)")
@@ -730,8 +760,9 @@ def build_knowledge_card_answer_prompt(
         parts.append("")
         parts.append("## Raw Fallback (참고용)")
         parts.append(
-            "카드와 직접 연결되지 않은 raw chunk 다. 본 답변에서는 보조 근거가 없을 때만 "
-            "조심스럽게 참고하라. 본문 인용 시 '정규화된 카드가 아직 없는 영역입니다' 라고 적어라."
+            "정규화 문서와 직접 연결되지 않은 raw chunk 다. 본 답변에서는 보조 근거가 "
+            "없을 때만 조심스럽게 참고하라. 본문 인용 시 '정규화 문서가 아직 없는 영역입니다' "
+            "라고 적어라."
         )
         parts.append(f"(총 {len(used_raw_fb)}개)")
         parts.extend(raw_fb_blocks)
@@ -740,11 +771,16 @@ def build_knowledge_card_answer_prompt(
     parts.append("## 출력")
     parts.append(
         "위 답변 형식을 그대로 따라 한국어로 답변하라. "
-        "주 근거 (KnowledgeCard) 의 카드를 1차 근거로 사용하고, 보조 근거는 보강 용도로만 인용하라. "
+        "주 근거 (Normalized Document) 의 정규화 문서를 1차 근거로 사용하고, 보조 근거는 "
+        "보강 용도로만 인용하라. "
         "근거에 없는 내용은 추정하지 말고, 부족하면 마지막 섹션에 명시하라. "
-        "참고 근거 섹션에서 KnowledgeCard 와 Raw Evidence 를 분리해 표기하고, "
+        "참고 근거 섹션에서 Normalized Document 와 Raw Evidence 를 분리해 표기하고, "
         "사람 실명/멘션/정확한 시간/원본 날짜는 답변과 참고 근거 모두에 적지 말 것."
     )
 
     used: List[RetrievedChunk] = list(used_cards) + list(used_raw_ev) + list(used_raw_fb)
     return "\n".join(parts), used, format_label
+
+
+# legacy alias — 기존 import 유지
+build_knowledge_card_answer_prompt = build_normalized_document_answer_prompt

@@ -1,7 +1,7 @@
 """
 pipeline_integration.py
 =======================
-LLM 기반 KnowledgeCard 정규화를 ingest pipeline 에 연결하는 helper 모듈.
+LLM-based Document Normalization 을 ingest pipeline 에 연결하는 helper 모듈.
 
 설계 의도
 ---------
@@ -13,7 +13,11 @@ LLM 기반 KnowledgeCard 정규화를 ingest pipeline 에 연결하는 helper �
   죽지 않도록, ``run_normalization_branch`` 는 raise 하지 않고 결과 dict
   를 반환한다. 모든 실패 경로는 log.warning 으로만 남긴다.
 - retrieval / QA / Streamlit UI 변경은 다른 Task 에서 처리한다. 이번 Task 에서는
-  단지 KnowledgeCard 가 chunk 형태로 저장될 수 있는 통로만 만든다.
+  단지 Normalized Document 가 chunk 형태로 저장될 수 있는 통로만 만든다.
+
+명칭 변경 노트:
+- 함수 ``knowledge_cards_to_chunks`` 는 ``normalized_documents_to_chunks`` 로
+  명칭이 바뀌었다. 기존 import 호환을 위해 legacy alias 를 유지한다.
 """
 from __future__ import annotations
 
@@ -21,10 +25,10 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from src.config import settings as default_settings
 from src.logger import get_logger
-from src.normalization.guide_normalizer import GuideKnowledgeNormalizer
+from src.normalization.guide_normalizer import GuideDocumentNormalizer
 from src.normalization.normalization_store import NormalizationStore
-from src.normalization.slack_normalizer import SlackThreadKnowledgeNormalizer
-from src.schemas import Chunk, KnowledgeCard
+from src.normalization.slack_normalizer import SlackThreadDocumentNormalizer
+from src.schemas import Chunk, KnowledgeCard, NormalizedDocument
 from src.utils.hash_utils import short_hash
 
 log = get_logger(__name__)
@@ -119,17 +123,17 @@ def extract_normalization_inputs(
 # Parent-child link
 # ---------------------------------------------------------------------------
 def attach_parent_raw_chunk_ids(
-    cards: List[KnowledgeCard],
+    cards: List[NormalizedDocument],
     *,
     raw_chunks: List[Any],
     top_k: int = 3,
 ) -> None:
-    """raw_chunks 의 앞쪽 top_k 개 chunk_id 를 모든 card.parent_raw_chunk_ids 에 채워 넣는다.
+    """raw_chunks 의 앞쪽 top_k 개 chunk_id 를 모든 document.parent_raw_chunk_ids 에 채워 넣는다.
 
     Task 4 단계에서는 정확한 semantic 매칭이 아니라 "같은 파일의 앞쪽 raw 청크" 를
     parent 로 단순 연결한다. 정교한 매칭은 이후 Task 에서 다룬다.
 
-    이미 채워진 카드의 parent_raw_chunk_ids 는 덮어쓰지 않는다.
+    이미 채워진 Normalized Document 의 parent_raw_chunk_ids 는 덮어쓰지 않는다.
     """
     if not cards or not raw_chunks:
         return
@@ -149,33 +153,35 @@ def attach_parent_raw_chunk_ids(
 
 
 # ---------------------------------------------------------------------------
-# KnowledgeCard → Chunk
+# Normalized Document → Chunk
 # ---------------------------------------------------------------------------
-def knowledge_cards_to_chunks(
-    cards: List[KnowledgeCard],
+def normalized_documents_to_chunks(
+    documents: List[NormalizedDocument],
     *,
     document_id: str,
     settings_obj: Any = None,
 ) -> List[Chunk]:
-    """KnowledgeCard 리스트를 ChromaDB 에 적재 가능한 Chunk 리스트로 변환한다.
+    """Normalized Document 리스트를 ChromaDB 에 적재 가능한 Chunk 리스트로 변환한다.
 
-    metadata 는 Task 6 의 retrieval 우선순위 적용 시 사용할 수 있는 형태로
-    정리한다 (이번 Task 에서는 boost / 우선순위 변경 자체는 적용하지 않는다).
+    Chunk 의 ``content_type`` 은 신규 표준 ``"normalized_document"`` 로 설정된다.
+    metadata 에는 신규 키 (``normalized_document_id`` / ``normalized_document_type``)
+    와 함께, retriever / reranker / qa pipeline 에 이미 색인된 기존 데이터와의
+    호환을 위해 legacy 키 (``card_id`` / ``card_type``) 도 동시에 채워 둔다.
     """
     s = settings_obj or default_settings
     out: List[Chunk] = []
-    for idx, card in enumerate(cards or []):
+    for idx, card in enumerate(documents or []):
         if card is None:
             continue
         try:
             if not card.validate_minimum():
                 log.warning(
-                    "KnowledgeCard validate_minimum 실패 → chunk 변환 skip: card_id=%s",
+                    "NormalizedDocument validate_minimum 실패 → chunk 변환 skip: id=%s",
                     getattr(card, "card_id", "?"),
                 )
                 continue
         except Exception as e:  # noqa: BLE001
-            log.warning("KnowledgeCard 검증 중 예외 (skip): %s", e)
+            log.warning("NormalizedDocument 검증 중 예외 (skip): %s", e)
             continue
         body = (card.sanitized_markdown or card.to_markdown() or "").strip()
         if not body:
@@ -200,8 +206,14 @@ def knowledge_cards_to_chunks(
             embedding_text=body,
             parent_chunk_id=None,
             section_title=card.title or None,
-            content_type="knowledge_card",
+            # 신규 표준 content_type. retriever / reranker / qa_pipeline 은
+            # legacy ``"knowledge_card"`` 도 함께 인식한다.
+            content_type="normalized_document",
             metadata={
+                # 신규 metadata 키 (권장)
+                "normalized_document_id": card.card_id or "",
+                "normalized_document_type": card.card_type or "",
+                # legacy compatibility — 기존에 색인된 chunk / 테스트와의 호환을 위해 유지
                 "card_id": card.card_id or "",
                 "card_type": card.card_type or "",
                 "primary_topic": card.primary_topic or "",
@@ -224,6 +236,10 @@ def knowledge_cards_to_chunks(
     return out
 
 
+# legacy alias — 기존 import 유지
+knowledge_cards_to_chunks = normalized_documents_to_chunks
+
+
 # ---------------------------------------------------------------------------
 # Normalizer dispatch
 # ---------------------------------------------------------------------------
@@ -244,7 +260,7 @@ def normalize_document_for_pipeline(
     gemini_client: Any,
     store: NormalizationStore,
     settings_obj: Any = None,
-) -> List[KnowledgeCard]:
+) -> List[NormalizedDocument]:
     """kind ('guide' | 'slack') 에 따라 적절한 normalizer 를 호출한다.
 
     raise 가 발생하면 ``run_normalization_branch`` 에서 잡아 raw ingest 가
@@ -254,7 +270,7 @@ def normalize_document_for_pipeline(
     file_hash_short = short_hash(file_hash_value, length=10) if file_hash_value else "unknown"
 
     if kind == "guide":
-        normalizer = GuideKnowledgeNormalizer(
+        normalizer = GuideDocumentNormalizer(
             gemini_client=gemini_client, store=store, settings=s
         )
         return normalizer.normalize_guide_text(
@@ -270,7 +286,7 @@ def normalize_document_for_pipeline(
         )
 
     if kind == "slack":
-        normalizer = SlackThreadKnowledgeNormalizer(
+        normalizer = SlackThreadDocumentNormalizer(
             gemini_client=gemini_client, store=store, settings=s
         )
         return normalizer.normalize_slack_thread_text(
@@ -306,10 +322,10 @@ def run_normalization_branch(
     normalization_store: Optional[NormalizationStore] = None,
     settings_obj: Any = None,
 ) -> Dict[str, Any]:
-    """ingest_file 의 LLM normalization branch entry.
+    """ingest_file 의 LLM-based Document Normalization branch entry.
 
     - 절대 raise 하지 않는다. 어떤 단계에서 실패해도 result dict 만 반환한다.
-    - cache hit 이면 LLM 호출 없이 KnowledgeCard 를 복원해 chunk 화한다.
+    - cache hit 이면 LLM 호출 없이 Normalized Document 를 복원해 chunk 화한다.
     - vector store / document store 저장 실패도 raw indexing 을 멈추지 않는다.
 
     Returns
@@ -402,13 +418,13 @@ def run_normalization_branch(
     except Exception as e:  # noqa: BLE001
         log.warning("parent raw chunk 연결 실패 (계속 진행): %s", e)
 
-    norm_chunks = knowledge_cards_to_chunks(
+    norm_chunks = normalized_documents_to_chunks(
         cards,
         document_id=getattr(document, "document_id", "") or "unknown_doc",
         settings_obj=s,
     )
     if not norm_chunks:
-        result["skipped_reason"] = "knowledge_card → chunk 변환 결과가 0개입니다."
+        result["skipped_reason"] = "normalized_document → chunk 변환 결과가 0개입니다."
         return result
 
     try:

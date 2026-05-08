@@ -1,11 +1,12 @@
 """
 guide_normalizer.py
 ===================
-Guide txt 문서를 LLM 으로 KnowledgeCard 로 정규화하는 normalizer.
+Guide txt 문서를 LLM-based Document Normalization 으로 Normalized Document
+리스트로 변환하는 normalizer.
 
 Task 2 범위
 -----------
-- Guide 본문(또는 guide chunk text) 를 받아 KnowledgeCard 리스트로 변환한다.
+- Guide 본문(또는 guide chunk text) 를 받아 Normalized Document 리스트로 변환한다.
 - file_hash + prompt_version + model_name 으로 cache 를 사용한다.
 - LLM 호출은 ``GeminiClient.generate_text(system_instruction=..., temperature=...)``
   에 의존한다. 테스트에서는 동일 시그니처의 fake client 를 주입한다.
@@ -14,11 +15,16 @@ Task 2 범위
 설계 의도
 ---------
 - Slack / 다른 normalizer 가 추가될 때 동일한 구조 (cache → prompt → LLM →
-  parse → KnowledgeCard 변환 → 저장 + cache set) 로 확장 가능하도록
+  parse → Normalized Document 변환 → 저장 + cache set) 로 확장 가능하도록
   helper 들을 모듈 함수로 분리해 두었다.
 - LLM 응답이 ```json 코드블록으로 감싸지는 모델 / 케이스가 흔하기 때문에
   파싱 단계에서 fence 를 robust 하게 제거한다.
 - cache hit 이어도 저장 파일이 사라졌다면 graceful 하게 LLM 재호출로 fallback 한다.
+
+명칭 변경 노트:
+- 클래스 ``GuideKnowledgeNormalizer`` 는 ``GuideDocumentNormalizer`` 로 명칭이
+  바뀌었다. 기존 import 호환을 위해 ``GuideKnowledgeNormalizer`` alias 가
+  유지된다.
 """
 from __future__ import annotations
 
@@ -34,8 +40,11 @@ from src.normalization.normalization_prompt import (
     build_guide_normalization_prompt,
 )
 from src.normalization.normalization_store import NormalizationStore
-from src.schemas import KnowledgeCard
-from src.schemas.knowledge_card import VALID_CARD_TYPES
+from src.schemas import KnowledgeCard, NormalizedDocument
+from src.schemas.normalized_document import VALID_NORMALIZED_DOCUMENT_TYPES
+
+# legacy alias — 기존 코드와의 호환을 위해 노출
+VALID_CARD_TYPES = VALID_NORMALIZED_DOCUMENT_TYPES
 
 log = get_logger(__name__)
 
@@ -122,7 +131,7 @@ def _as_str_list(value: Any) -> List[str]:
 
 
 def _normalize_evidence_spans(spans: Any) -> List[Dict[str, Any]]:
-    """LLM 이 반환한 evidence_spans 를 KnowledgeCard.to_markdown 이 인식 가능한 형태로 정규화."""
+    """LLM 이 반환한 evidence_spans 를 NormalizedDocument.to_markdown 이 인식 가능한 형태로 정규화."""
     if not isinstance(spans, list):
         return []
     out: List[Dict[str, Any]] = []
@@ -153,12 +162,16 @@ def _normalize_evidence_spans(spans: Any) -> List[Dict[str, Any]]:
 
 def _coerce_card_type(value: Any, default: str = "workflow") -> str:
     candidate = _as_str(value, default).strip().lower()
-    if candidate in VALID_CARD_TYPES:
+    if candidate in VALID_NORMALIZED_DOCUMENT_TYPES:
         return candidate
     return default
 
 
 def _make_card_id(file_hash_short: str, idx: int, card_type: str) -> str:
+    """Normalized Document 의 식별자 (legacy 명: card_id) 를 만든다.
+
+    기존 저장 JSON / metadata 호환을 위해 prefix 는 ``kc_`` 를 그대로 둔다.
+    """
     short = (file_hash_short or "unknown").strip() or "unknown"
     safe_type = card_type or "card"
     return f"kc_{short}_{idx:03d}_{safe_type}"
@@ -167,8 +180,11 @@ def _make_card_id(file_hash_short: str, idx: int, card_type: str) -> str:
 # ---------------------------------------------------------------------------
 # Normalizer
 # ---------------------------------------------------------------------------
-class GuideKnowledgeNormalizer:
-    """Guide 문서를 KnowledgeCard 리스트로 정규화하는 LLM normalizer."""
+class GuideDocumentNormalizer:
+    """Guide 문서를 Normalized Document 리스트로 변환하는 LLM normalizer.
+
+    legacy alias: ``GuideKnowledgeNormalizer`` (모듈 하단에서 노출).
+    """
 
     def __init__(
         self,
@@ -202,10 +218,10 @@ class GuideKnowledgeNormalizer:
         display_date: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         chunk_index: int = 0,
-    ) -> List[KnowledgeCard]:
-        """Guide 본문을 LLM 으로 정규화해 KnowledgeCard 리스트를 반환한다.
+    ) -> List[NormalizedDocument]:
+        """Guide 본문을 LLM 으로 Normalized Document 리스트로 변환한다.
 
-        cache hit 이면 LLM 호출 없이 저장된 JSON 으로부터 KnowledgeCard 들을 복원한다.
+        cache hit 이면 LLM 호출 없이 저장된 JSON 으로부터 Normalized Document 들을 복원한다.
         cache miss 이면 LLM 을 1회 호출하고, 결과를 JSON / Markdown 으로 저장한 뒤
         cache index 를 업데이트한다.
         """
@@ -337,7 +353,7 @@ class GuideKnowledgeNormalizer:
 
     def _load_from_cache(
         self, cached: Dict[str, Any]
-    ) -> Optional[List[KnowledgeCard]]:
+    ) -> Optional[List[NormalizedDocument]]:
         json_path_str = cached.get("json_path")
         if not json_path_str:
             return None
@@ -363,17 +379,17 @@ class GuideKnowledgeNormalizer:
         display_date: Optional[str],
         metadata: Optional[Dict[str, Any]],
         model_name: str,
-    ) -> List[KnowledgeCard]:
+    ) -> List[NormalizedDocument]:
         base_metadata: Dict[str, Any] = dict(metadata or {})
         base_metadata.setdefault("prompt_version", self.prompt_version)
         base_metadata.setdefault("model_name", model_name)
 
-        cards: List[KnowledgeCard] = []
+        cards: List[NormalizedDocument] = []
         for idx, raw in enumerate(raw_cards):
             if not isinstance(raw, dict):
                 continue
             card_type = _coerce_card_type(raw.get("card_type"), default="workflow")
-            card = KnowledgeCard(
+            card = NormalizedDocument(
                 card_id=_make_card_id(file_hash_short, idx, card_type),
                 card_type=card_type,
                 title=_as_str(raw.get("title")).strip() or "(제목 없음)",
@@ -403,3 +419,9 @@ class GuideKnowledgeNormalizer:
             card.sanitized_markdown = card.to_markdown()
             cards.append(card)
         return cards
+
+
+# ---------------------------------------------------------------------------
+# legacy compatibility — 기존 import 유지
+# ---------------------------------------------------------------------------
+GuideKnowledgeNormalizer = GuideDocumentNormalizer

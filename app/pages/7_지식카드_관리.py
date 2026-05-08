@@ -1,7 +1,10 @@
 """
 7_지식카드_관리.py
 ==================
-LLM normalization 으로 생성된 KnowledgeCard 를 확인하는 read-only 관리 페이지.
+LLM-based Document Normalization 으로 생성된 Normalized Document 를 확인하는
+read-only 관리 페이지.
+
+(파일명은 기존 한글 경로 호환을 위해 유지하되, UI 표시명은 "정규화 문서 관리" 로 변경했다.)
 
 주의:
 - raw 원문은 표시하지 않는다.
@@ -21,17 +24,17 @@ from app.components.sidebar import render_sidebar
 from src.config import settings
 from src.normalization import (
     NormalizationStore,
-    card_to_display_dict,
-    filter_cards,
+    filter_normalized_documents,
     list_normalized_json_files,
     list_normalized_markdown_files,
-    load_all_cards_from_store,
-    markdown_for_card,
-    summarize_cards,
+    load_all_normalized_documents_from_store,
+    markdown_for_normalized_document,
+    normalized_document_to_display_dict,
+    summarize_normalized_documents,
 )
 
 
-CARD_TYPE_OPTIONS = [
+NORMALIZED_DOCUMENT_TYPE_OPTIONS = [
     "전체",
     "workflow",
     "issue",
@@ -76,13 +79,13 @@ def _render_list(title: str, values: list[str], *, numbered: bool = False) -> No
         st.write(f"{prefix}{value}")
 
 
-st.set_page_config(page_title="지식카드 관리", layout="wide")
+st.set_page_config(page_title="정규화 문서 관리", layout="wide")
 render_sidebar()
 
-st.title("지식카드 관리")
+st.title("정규화 문서 관리")
 st.caption(
-    "LLM normalization 으로 생성된 KnowledgeCard JSON/Markdown 을 확인합니다. "
-    "raw 원문은 표시하지 않고 sanitized markdown 중심으로 보여줍니다."
+    "LLM-based Document Normalization 으로 생성된 Normalized Document JSON/Markdown 을 "
+    "확인합니다. raw 원문은 표시하지 않고 sanitized markdown 중심으로 보여줍니다."
 )
 
 store = NormalizationStore(
@@ -96,7 +99,7 @@ if st.button("새로고침"):
 
 
 @st.cache_data(show_spinner=False)
-def _load_cards_and_files(json_dir: str, markdown_dir: str):
+def _load_documents_and_files(json_dir: str, markdown_dir: str):
     cached_store = NormalizationStore(
         output_dir=Path(json_dir).parent,
         cache_dir=settings.normalization_cache_dir,
@@ -104,28 +107,28 @@ def _load_cards_and_files(json_dir: str, markdown_dir: str):
     # cache_data 함수 안에서 넘겨받은 경로를 명시적으로 맞춘다.
     cached_store.json_dir = Path(json_dir)
     cached_store.markdown_dir = Path(markdown_dir)
-    cards = load_all_cards_from_store(cached_store)
+    docs = load_all_normalized_documents_from_store(cached_store)
     json_files = list_normalized_json_files(cached_store)
     md_files = list_normalized_markdown_files(cached_store)
-    return cards, json_files, md_files
+    return docs, json_files, md_files
 
 
-if st.button("카드 JSON 다시 로드"):
-    _load_cards_and_files.clear()
+if st.button("정규화 문서 JSON 다시 로드"):
+    _load_documents_and_files.clear()
     st.rerun()
 
 
-cards, json_files, md_files = _load_cards_and_files(
+cards, json_files, md_files = _load_documents_and_files(
     str(store.json_dir),
     str(store.markdown_dir),
 )
-summary = summarize_cards(cards)
+summary = summarize_normalized_documents(cards)
 
 st.subheader("요약")
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("JSON 파일", len(json_files))
 col2.metric("Markdown 파일", len(md_files))
-col3.metric("KnowledgeCard", summary["total_cards"])
+col3.metric("Normalized Document", summary["total_cards"])
 col4.metric("Cache index", "있음" if store.cache_index_path.exists() else "없음")
 
 with st.expander("저장 위치", expanded=False):
@@ -138,9 +141,9 @@ with st.expander("저장 위치", expanded=False):
 
 dist_col1, dist_col2, dist_col3 = st.columns(3)
 with dist_col1:
-    st.markdown("**card_type 분포**")
+    st.markdown("**normalized_document_type 분포**")
     st.dataframe(
-        _counter_to_rows(summary["card_type_counts"], "card_type"),
+        _counter_to_rows(summary["card_type_counts"], "normalized_document_type"),
         use_container_width=True,
         hide_index=True,
     )
@@ -165,7 +168,9 @@ st.subheader("필터")
 source_files = ["전체"] + sorted({c.source_file_name for c in cards if c.source_file_name})
 filter_col1, filter_col2, filter_col3, filter_col4 = st.columns([1, 1, 1.4, 1.8])
 with filter_col1:
-    selected_card_type = st.selectbox("card_type", CARD_TYPE_OPTIONS)
+    selected_card_type = st.selectbox(
+        "normalized_document_type", NORMALIZED_DOCUMENT_TYPE_OPTIONS
+    )
 with filter_col2:
     selected_topic = st.selectbox("primary_topic", TOPIC_OPTIONS)
 with filter_col3:
@@ -176,7 +181,7 @@ with filter_col4:
         placeholder="title, summary, when_to_use, steps, checkpoints, cautions, related_terms",
     )
 
-filtered_cards = filter_cards(
+filtered_cards = filter_normalized_documents(
     cards,
     card_type=selected_card_type,
     primary_topic=selected_topic,
@@ -184,21 +189,24 @@ filtered_cards = filter_cards(
     query=query,
 )
 
-st.caption(f"필터 결과: {len(filtered_cards)} / {len(cards)} cards")
+st.caption(f"필터 결과: {len(filtered_cards)} / {len(cards)} 개")
 
 if not cards:
     st.info(
-        "아직 생성된 KnowledgeCard 가 없습니다. "
+        "아직 생성된 Normalized Document 가 없습니다. "
         "`ENABLE_LLM_NORMALIZATION=true` 로 Guide/Slack 파일을 색인하면 결과가 생성됩니다."
     )
     st.stop()
 
-table_rows = [card_to_display_dict(c) | {"_idx": i} for i, c in enumerate(filtered_cards)]
+table_rows = [
+    normalized_document_to_display_dict(c) | {"_idx": i}
+    for i, c in enumerate(filtered_cards)
+]
 if not table_rows:
-    st.warning("필터 조건에 맞는 카드가 없습니다.")
+    st.warning("필터 조건에 맞는 정규화 문서가 없습니다.")
     st.stop()
 
-st.subheader("카드 목록")
+st.subheader("정규화 문서 목록")
 st.dataframe(
     [{k: v for k, v in row.items() if k != "_idx"} for row in table_rows],
     use_container_width=True,
@@ -209,18 +217,18 @@ label_to_idx = {
     f"{row['title']} · {row['card_type']} · {row['source_file_name']}": row["_idx"]
     for row in table_rows
 }
-selected_label = st.selectbox("상세 확인할 카드 선택", list(label_to_idx.keys()))
+selected_label = st.selectbox("상세 확인할 정규화 문서 선택", list(label_to_idx.keys()))
 selected_card = filtered_cards[label_to_idx[selected_label]]
 
 st.divider()
-st.subheader("카드 상세")
+st.subheader("정규화 문서 상세")
 
 detail_col1, detail_col2 = st.columns([1, 1])
 with detail_col1:
     st.markdown(f"### {selected_card.title}")
     st.write(selected_card.summary)
     st.write({
-        "card_type": selected_card.card_type,
+        "normalized_document_type": selected_card.normalized_document_type,
         "primary_topic": selected_card.primary_topic or "unknown",
         "topic_tags": selected_card.topic_tags,
         "task_type": selected_card.task_type,
@@ -254,28 +262,28 @@ with detail_col4:
         st.caption("(근거 없음)")
 
 st.markdown("### Sanitized Markdown Preview")
-markdown_text = markdown_for_card(selected_card)
+markdown_text = markdown_for_normalized_document(selected_card)
 st.markdown(markdown_text or "(표시할 sanitized markdown 이 없습니다.)")
 
 download_col1, download_col2 = st.columns(2)
 with download_col1:
     st.download_button(
-        "카드 Markdown 다운로드",
+        "정규화 문서 Markdown 다운로드",
         data=(markdown_text or "").encode("utf-8"),
-        file_name=f"{selected_card.card_id or 'knowledge_card'}.md",
+        file_name=f"{selected_card.normalized_document_id or 'normalized_document'}.md",
         mime="text/markdown",
     )
 with download_col2:
     st.download_button(
-        "카드 JSON 다운로드",
+        "정규화 문서 JSON 다운로드",
         data=json.dumps(selected_card.to_dict(), ensure_ascii=False, indent=2).encode("utf-8"),
-        file_name=f"{selected_card.card_id or 'knowledge_card'}.json",
+        file_name=f"{selected_card.normalized_document_id or 'normalized_document'}.json",
         mime="application/json",
     )
 
 with st.expander("JSON metadata 확인", expanded=False):
     st.json({
-        "card_id": selected_card.card_id,
+        "normalized_document_id": selected_card.normalized_document_id,
         "source_file_hash": selected_card.source_file_hash,
         "parent_raw_chunk_ids": selected_card.parent_raw_chunk_ids,
         "metadata": selected_card.metadata,

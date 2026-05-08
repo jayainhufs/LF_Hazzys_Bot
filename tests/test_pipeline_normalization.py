@@ -532,7 +532,9 @@ class TestKnowledgeCardsToChunks:
 
         assert len(chunks) == 1
         chunk = chunks[0]
-        assert chunk.content_type == "knowledge_card"
+        # 신규 표준 content_type. retriever / qa pipeline 은 legacy
+        # ``"knowledge_card"`` 도 함께 인식한다.
+        assert chunk.content_type == "normalized_document"
         assert chunk.source_type == "llm_normalized"
         assert chunk.uploaded_category == "guide"
         assert chunk.file_name == "guide.txt"
@@ -540,6 +542,10 @@ class TestKnowledgeCardsToChunks:
         assert "## 업무 절차" in chunk.content
 
         md = chunk.metadata
+        # 신규 metadata 키
+        assert md["normalized_document_id"] == "kc_aa11bb22_001_workflow"
+        assert md["normalized_document_type"] == "workflow"
+        # legacy 키 (backward compat) 가 동일 값으로 유지된다
         assert md["card_id"] == "kc_aa11bb22_001_workflow"
         assert md["card_type"] == "workflow"
         assert md["primary_topic"] == "meta"
@@ -737,8 +743,13 @@ class TestRunNormalizationBranchHappyPath:
 
         assert len(vstore.added) == 1
         norm_chunk = vstore.added[0]
-        assert norm_chunk.content_type == "knowledge_card"
+        # 신규 명칭: content_type == "normalized_document"
+        # legacy 호환: 기존 "knowledge_card" 값을 기대하는 코드 경로를 위해
+        #   reranker / qa_pipeline 은 두 값을 모두 인식해야 한다 (별도 테스트 참조).
+        assert norm_chunk.content_type == "normalized_document"
         assert norm_chunk.source_type == "llm_normalized"
+        # 신규 metadata 키 (normalized_document_*) 와 legacy (card_*) 가 동시에 존재
+        assert norm_chunk.metadata["normalized_document_type"] == "workflow"
         assert norm_chunk.metadata["card_type"] == "workflow"
         assert norm_chunk.metadata["primary_topic"] == "meta"
         assert "meta" in norm_chunk.metadata["topic_tags"]
@@ -810,9 +821,12 @@ class TestRunNormalizationBranchHappyPath:
 
         assert len(vstore.added) == 1
         norm_chunk = vstore.added[0]
-        assert norm_chunk.content_type == "knowledge_card"
+        # 신규: content_type == "normalized_document". legacy 인식 검증은
+        # tests/test_legacy_compatibility.py / test_knowledge_card_qa.py 에서 다룬다.
+        assert norm_chunk.content_type == "normalized_document"
         assert norm_chunk.source_type == "llm_normalized"
         assert norm_chunk.uploaded_category == "slack"
+        assert norm_chunk.metadata["normalized_document_type"] == "issue"
         assert norm_chunk.metadata["card_type"] == "issue"
         assert norm_chunk.metadata["primary_topic"] == "settlement"
         assert "settlement" in norm_chunk.metadata["topic_tags"]
@@ -831,11 +845,22 @@ class TestRunNormalizationBranchHappyPath:
 class TestPipelineDisabledPath:
     """``ENABLE_LLM_NORMALIZATION=false`` 일 때 normalizer 가 절대 호출되지 않음을 검증."""
 
-    def test_run_branch_is_only_called_when_setting_true(self):
-        from src.pipeline import settings as pipeline_settings
+    def test_run_branch_is_only_called_when_setting_true(self, monkeypatch):
+        """``ENABLE_LLM_NORMALIZATION=false`` 일 때 ``Settings.from_env()`` 가
+        ``enable_llm_normalization=False`` 를 반환하는지 검증.
 
-        # default 는 false
-        assert pipeline_settings.enable_llm_normalization is False
+        주의:
+        - ``src.pipeline.settings`` 는 모듈 import 시점에 ``Settings.from_env()`` 로
+          한 번 생성되므로, 로컬 ``.env`` 값에 영향을 받는다.
+        - 따라서 이 테스트는 모듈 캐시된 singleton 대신 ``monkeypatch`` 로 환경변수를
+          명시적으로 ``"false"`` 로 고정한 뒤 ``Settings.from_env()`` 를 새로 호출해
+          로컬 ``.env`` 와 무관한 결정적 결과를 검증한다.
+        """
+        from src.config import Settings
+
+        monkeypatch.setenv("ENABLE_LLM_NORMALIZATION", "false")
+        fresh_settings = Settings.from_env()
+        assert fresh_settings.enable_llm_normalization is False
 
     def test_disabled_setting_keeps_fake_client_unused(self, tmp_path):
         """settings.enable_llm_normalization=False 일 때 ingest_file 흐름이

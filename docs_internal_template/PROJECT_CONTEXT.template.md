@@ -46,7 +46,7 @@
 
 ## 4. 파일 유형별 처리 원칙
 
-- 가이드 → 공식 절차 근거. KnowledgeCard `workflow / checklist / glossary /
+- 가이드 → 공식 절차 근거. Normalized Document `workflow / checklist / glossary /
   communication_template` 우선.
 - 메신저 스레드 → 실무 히스토리. `issue / decision / checklist / faq /
   communication_template` 우선.
@@ -79,7 +79,8 @@
 
 ## 8. 추후 확장 아이디어
 
-- KnowledgeCard 정규화를 어떤 데이터 소스로 확장할지 (예: 메일, 카카오 내보내기, 결재 문서).
+- LLM-based Document Normalization 을 어떤 데이터 소스로 확장할지 (예: 메일, 카카오
+  내보내기, 결재 문서).
 - 어떤 평가 지표를 자동화할지 (retrieval hit rate, answer groundedness, 사용자 피드백).
 - 어떤 reranker 를 추가로 검토할지 (Gemini reranker, cross-encoder).
 - 어떤 hybrid retrieval (BM25 + vector) 가 적합할지.

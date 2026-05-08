@@ -24,7 +24,7 @@ from src.preprocessing.anonymizer import anonymize_text
 from src.rag.embedder import Embedder, get_default_embedder
 from src.rag.generator import Generator
 from src.rag.prompt_builder import (
-    build_knowledge_card_answer_prompt,
+    build_normalized_document_answer_prompt,
     build_qa_prompt,
     split_chunks_by_retrieval_role,
 )
@@ -76,9 +76,15 @@ class QAPipeline:
                 "generation_skipped": True,
                 "skip_reason": "empty_question",
                 "retrieval_summary": {},
-                # Task 7: knowledge_card 중심 답변 진단 (호환용 default)
+                # Task 7: Normalized Document 중심 답변 진단 (호환용 default)
                 "answer_mode": "insufficient_evidence",
                 "answer_format_label": "default",
+                "primary_normalized_document_count": 0,
+                "primary_normalized_documents": [],
+                "normalized_document_answer_template_version": (
+                    settings.knowledge_card_answer_template_version
+                ),
+                # legacy 호환 키
                 "primary_card_count": 0,
                 "raw_evidence_count": 0,
                 "raw_fallback_count": 0,
@@ -126,7 +132,7 @@ class QAPipeline:
         prompt_chars = 0
         answer_format_label = "default"
 
-        # Task 7: retrieval_role 기반 그룹 카운트 (knowledge_card 중심 답변용)
+        # Task 7: retrieval_role 기반 그룹 카운트 (Normalized Document 중심 답변용)
         groups = split_chunks_by_retrieval_role(passed)
         primary_card_count = len(groups["primary_cards"])
         raw_evidence_count = len(groups["raw_evidence"])
@@ -152,12 +158,14 @@ class QAPipeline:
                 and primary_card_count > 0
             ):
                 prompt, used_chunks, answer_format_label = (
-                    build_knowledge_card_answer_prompt(
+                    build_normalized_document_answer_prompt(
                         question=q,
                         chunks=passed,
                         rewritten_query=rewritten,
                     )
                 )
+                # answer_mode 라벨은 기존 ("knowledge_card") 을 유지해 외부 호환을 보장한다.
+                # Streamlit / 로그 / 테스트가 이미 이 라벨을 비교하기 때문이다.
                 answer_mode = "knowledge_card"
             else:
                 prompt, used_chunks = build_qa_prompt(
@@ -224,9 +232,18 @@ class QAPipeline:
                 "query_intent": summary.get("query_intent"),
                 "enable_date_filter": summary.get("enable_date_filter"),
                 "anonymize_output": summary.get("anonymize_output"),
-                # Task 7: knowledge_card 중심 답변 진단
+                # Task 7: Normalized Document 중심 답변 진단
                 "answer_mode": answer_mode,
                 "answer_format_label": answer_format_label,
+                # 신규 진단 키
+                "primary_normalized_document_count": primary_card_count,
+                "answer_with_normalized_documents": bool(
+                    settings.answer_with_knowledge_cards
+                ),
+                "normalized_document_answer_template_version": (
+                    settings.knowledge_card_answer_template_version
+                ),
+                # legacy 호환 키
                 "primary_card_count": primary_card_count,
                 "raw_evidence_count": raw_evidence_count,
                 "raw_fallback_count": raw_fallback_count,
@@ -257,9 +274,16 @@ class QAPipeline:
             "skip_reason": skip_reason,
             "retrieval_summary": summary,
             "prompt_chars": prompt_chars,
-            # Task 7: knowledge_card 중심 답변 진단
+            # Task 7: Normalized Document 중심 답변 진단
             "answer_mode": answer_mode,
             "answer_format_label": answer_format_label,
+            # 신규 진단 키
+            "primary_normalized_document_count": primary_card_count,
+            "primary_normalized_documents": list(groups["primary_cards"]),
+            "normalized_document_answer_template_version": (
+                settings.knowledge_card_answer_template_version
+            ),
+            # legacy 호환 키
             "primary_card_count": primary_card_count,
             "raw_evidence_count": raw_evidence_count,
             "raw_fallback_count": raw_fallback_count,

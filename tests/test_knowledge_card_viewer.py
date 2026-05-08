@@ -1,4 +1,10 @@
-"""KnowledgeCard viewer helper 단위 테스트."""
+"""Normalized Document viewer helper 단위 테스트.
+
+명칭 변경 노트
+----------------
+- 함수 이름 (``load_all_cards_from_store`` 등) 은 기존 import 호환을 위해 유지된다.
+- ``KnowledgeCard`` 는 ``NormalizedDocument`` 의 alias 다.
+"""
 from __future__ import annotations
 
 from src.normalization import NormalizationStore

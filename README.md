@@ -16,7 +16,7 @@ Notes](#security--privacy-notes) 참고).
 1. [프로젝트 개요](#1-프로젝트-개요)
 2. [시스템 아키텍처](#2-시스템-아키텍처)
 3. [지원 파일 유형](#3-지원-파일-유형)
-4. [KnowledgeCard 정규화 아키텍처](#4-knowledgecard-정규화-아키텍처)
+4. [LLM-based Document Normalization 아키텍처](#4-llm-based-document-normalization-아키텍처)
 5. [Task 1~7 기능 요약](#5-task-17-기능-요약)
 6. [설치 및 실행 (Mac)](#6-설치-및-실행-mac)
 7. [설치 및 실행 (Windows)](#7-설치-및-실행-windows)
@@ -51,6 +51,10 @@ Notes](#security--privacy-notes) 참고).
 
 ## 2. 시스템 아키텍처
 
+raw 문서를 그대로 embedding 하지 않고, **LLM-based Document Normalization** 을 통해
+**Normalized Document** 를 생성한 뒤 이를 검색과 답변의 1차 근거로 사용한다.
+raw chunk 는 원문 보조 근거 또는 fallback 으로 함께 유지된다.
+
 ```
 [사용자 업로드 파일]
   ├─ 텍스트 가이드 (txt / md / docx)
@@ -60,27 +64,34 @@ Notes](#security--privacy-notes) 참고).
         ↓
 [로컬 파일 저장소  ./data/raw/<카테고리>]
         ↓
-[Parser Layer]   txt / markdown / word / kakao-style / excel
-        ↓
-[Cleaning & Normalization]
+[Parser / Cleaning / Anonymization]
         ↓
 [(옵션) Excel 한국어 업무 요약 — Gemini API]
         ↓
-[Chunking + 메타데이터]
-        ↓
-[(옵션) LLM KnowledgeCard 정규화 — Gemini API]
-        ↓
-[Embedding (Gemini API | sentence-transformers 로컬)]
-        ↓
-[Local ChromaDB  ./storage/chroma_db]
-        ↓
-[Retrieval + Reranking + KnowledgeCard 우선순위 + Parent-Child 보강]
-        ↓
-[Prompt Builder (KnowledgeCard 중심 또는 raw fallback)]
-        ↓
-[Gemini Generation API]
-        ↓
-[근거 기반 한국어 답변 + 진단 메타데이터]
+        ┌──────────────────────────────────────────┐
+        │                                          │
+        ▼                                          ▼
+[Raw Chunk 생성]                  [(옵션) LLM-based Document Normalization]
+        │                                          ↓
+        │                          [Normalized Document 생성]
+        │                                          ↓
+        │                          [Normalized Document Chunk 생성]
+        │                                          │
+        └──────────────────┬───────────────────────┘
+                           ▼
+        [Embedding (Gemini API | sentence-transformers 로컬)]
+                           ↓
+                [Local ChromaDB  ./storage/chroma_db]
+                           ↓
+        [Normalized Document 우선 Retrieval + Reranking + Parent-Child 보강]
+                           ↓
+                [Raw Evidence / Raw Fallback 보강]
+                           ↓
+        [Prompt Builder — Normalized Document 중심 답변 (또는 raw fallback)]
+                           ↓
+                   [Gemini Generation API]
+                           ↓
+            [근거 기반 한국어 답변 + 진단 메타데이터]
 ```
 
 핵심 모듈
@@ -91,14 +102,14 @@ src/
   ingestion/            # 파일 → ParsedSection
   preprocessing/        # 정제, 청크, 비식별화
   summarization/        # Excel 한국어 요약
-  normalization/        # LLM KnowledgeCard 정규화 (Task 1~4)
+  normalization/        # LLM-based Document Normalization (Task 1~4)
   rag/                  # embedder, retriever, reranker, generator, qa_pipeline, prompt_builder
   storage/              # ChromaDB / file registry / processed JSONL
-  schemas/              # dataclass (Document, Chunk, KnowledgeCard, RetrievedChunk, ...)
+  schemas/              # dataclass (Document, Chunk, NormalizedDocument, RetrievedChunk, ...)
   utils/                # path / hash / time / encoding / token / cost
 app/
   main.py               # Streamlit 홈
-  pages/                # 1_문서_업로드 ~ 7_지식카드_관리
+  pages/                # 1_문서_업로드 ~ 7_정규화_문서_관리
   components/           # UI helper
 ```
 
@@ -122,30 +133,30 @@ PDF / 이미지 OCR / Hybrid Retrieval / 자동 폴더 watcher 등은 현재 MVP
 
 ---
 
-## 4. KnowledgeCard 정규화 아키텍처
+## 4. LLM-based Document Normalization 아키텍처
 
-raw 텍스트를 그대로 chunking / 임베딩하는 대신, LLM 으로 한 번 더 구조화해 **`KnowledgeCard`**
-형태의 업무 지식 단위로 정리한다. 검색과 답변은 카드 단위를 1차 근거로 사용하고, raw chunk
-는 보조 근거 또는 fallback 으로만 활용한다.
+raw 텍스트를 그대로 chunking / 임베딩하는 대신, LLM 으로 한 번 더 구조화해
+**`NormalizedDocument`** 형태의 업무 지식 단위로 정리한다. 검색과 답변은 Normalized
+Document 단위를 1차 근거로 사용하고, raw chunk 는 보조 근거 또는 fallback 으로만 활용한다.
 
 ```
 [raw 텍스트 chunk]                    ←  기존 RAG 색인 흐름은 그대로 유지
         ↓
-[(옵션) KnowledgeCard 정규화]
-  ├─ Guide → workflow / checklist / faq / glossary / communication_template / decision
+[(옵션) LLM-based Document Normalization]
+  ├─ Guide       → workflow / checklist / faq / glossary / communication_template / decision
   └─ Slack-style → issue / decision / checklist / communication_template / faq / workflow
         ↓
 [NormalizationStore  ./data/processed/normalized/{json,markdown}]
   └─ file_hash + prompt_version + model_name 기반 cache 로 중복 호출 방지
         ↓
-[ChromaDB 에 추가 색인 — content_type=knowledge_card / source_type=llm_normalized]
+[ChromaDB 에 추가 색인 — content_type=normalized_document / source_type=llm_normalized]
         ↓
-[Retriever / Reranker 가 카드 우선 boost  →  retrieval_role 라벨링]
+[Retriever / Reranker 가 Normalized Document 우선 boost → retrieval_role 라벨링]
         ↓
-[QA Prompt Builder — 카드 중심 답변 형식 (default / communication_template / glossary)]
+[QA Prompt Builder — Normalized Document 중심 답변 형식 (default / communication_template / glossary)]
 ```
 
-`KnowledgeCard` 의 카드 타입은 다음 중 하나다.
+`NormalizedDocument` 의 type 은 다음 중 하나다.
 
 - `workflow` — 반복 가능한 업무 절차
 - `checklist` — 확인 항목 중심
@@ -155,35 +166,47 @@ raw 텍스트를 그대로 chunking / 임베딩하는 대신, LLM 으로 한 번
 - `communication_template` — 광고주 / 매체사 / 내부 공유 문안
 - `issue` — 이슈 상황 / 원인 / 대응
 
-각 카드의 metadata 에는 `card_id`, `card_type`, `primary_topic`, `topic_tags`, `task_type`,
-`document_date`, `display_date`, `parent_raw_chunk_ids` 등이 함께 저장되어, 검색 우선순위와
-답변 근거 분리에 사용된다.
+각 Normalized Document 의 metadata 에는 `normalized_document_id`,
+`normalized_document_type`, `primary_topic`, `topic_tags`, `task_type`, `document_date`,
+`display_date`, `parent_raw_chunk_ids` 등이 함께 저장되어 검색 우선순위와 답변 근거 분리에
+사용된다.
+
+> **Backward compatibility**: 기존에 색인된 데이터는 `content_type="knowledge_card"` /
+> `card_id` / `card_type` 으로 저장되어 있을 수 있다. retriever / reranker / qa pipeline
+> 은 신규 (`normalized_document` / `normalized_document_id` / `normalized_document_type`)
+> 와 legacy 키를 모두 인식한다. 새로 색인되는 chunk 는 신규 표준을 사용한다.
 
 ---
 
 ## 5. Task 1~7 기능 요약
 
-LLM 기반 KnowledgeCard 정규화 MVP 는 7 단계로 구현되어 있다 (모두 완료).
+LLM-based Document Normalization MVP 는 7 단계로 구현되어 있다 (모두 완료).
 
 | Task | 기능 | 핵심 산출물 |
 | --- | --- | --- |
-| 1 | KnowledgeCard schema + NormalizationStore | `src/schemas/knowledge_card.py`, `src/normalization/normalization_store.py` |
-| 2 | Guide normalizer (LLM 호출 + cache) | `src/normalization/guide_normalizer.py`, `normalization_prompt.py` |
-| 3 | Slack-style 스레드 normalizer (LLM 호출 + cache) | `src/normalization/slack_normalizer.py`, `normalization_prompt.py` |
+| 1 | NormalizedDocument schema + NormalizationStore | `src/schemas/normalized_document.py`, `src/normalization/normalization_store.py` |
+| 2 | Guide document normalizer (LLM 호출 + cache) | `src/normalization/guide_normalizer.py` (`GuideDocumentNormalizer`), `normalization_prompt.py` |
+| 3 | Slack-style 스레드 document normalizer (LLM 호출 + cache) | `src/normalization/slack_normalizer.py` (`SlackThreadDocumentNormalizer`), `normalization_prompt.py` |
 | 4 | `ENABLE_LLM_NORMALIZATION` 옵션을 ingest pipeline 에 연결 | `src/normalization/pipeline_integration.py`, `src/pipeline.py` |
-| 5 | Streamlit 지식카드 관리 UI (read-only) | `app/pages/7_지식카드_관리.py`, `src/normalization/card_viewer.py` |
-| 6 | 검색 단계 KnowledgeCard 우선 retrieval / reranker | `src/rag/reranker.py` (`apply_knowledge_card_priority`), `src/rag/retriever.py` |
-| 7 | QA prompt 가 KnowledgeCard 를 1차 근거로 사용 | `src/rag/prompt_builder.py` (`build_knowledge_card_answer_prompt`), `src/rag/qa_pipeline.py` |
+| 5 | Streamlit 정규화 문서 관리 UI (read-only) | `app/pages/7_지식카드_관리.py` (UI 표시명: "정규화 문서 관리"), `src/normalization/card_viewer.py` |
+| 6 | 검색 단계 Normalized Document 우선 retrieval / reranker | `src/rag/reranker.py` (`apply_normalized_document_priority`), `src/rag/retriever.py` |
+| 7 | QA prompt 가 Normalized Document 를 1차 근거로 사용 | `src/rag/prompt_builder.py` (`build_normalized_document_answer_prompt`), `src/rag/qa_pipeline.py` |
 
 검색 / 답변 단계의 핵심 진단 필드
 
 - `retrieval_role` ∈ {`primary_card`, `raw_evidence`, `raw_fallback`}
+  (라벨 문자열 자체는 호환을 위해 유지된다.)
 - `answer_mode` ∈ {`knowledge_card`, `raw_fallback`, `insufficient_evidence`}
-- `card_id` / `card_type` / `primary_topic` / `task_type`
-- `knowledge_card_boost`, `card_type_boost`, `card_type_match`
+  (라벨 문자열 자체는 호환을 위해 유지된다.)
+- `normalized_document_id` / `normalized_document_type` (legacy: `card_id` / `card_type`)
+- `primary_topic` / `task_type`
+- `normalized_document_boost`, `normalized_document_type_boost`,
+  `normalized_document_type_match`
 - `parent_raw_chunk_ids`, `final_score`
 
-이 필드들은 Streamlit 의 검색 테스트 / QA 페이지에서 그대로 확인할 수 있다.
+이 필드들은 Streamlit 의 검색 테스트 / QA 페이지에서 그대로 확인할 수 있다. 기존
+`knowledge_card_boost` / `card_type_boost` / `card_type_match` 등 legacy 키도 동일한 값으로
+함께 채워진다.
 
 ---
 
@@ -269,10 +292,14 @@ Windows 추가 주의사항
 | `ENABLE_DATE_FILTER` / `DATE_EXACT_MATCH_BOOST` / `DATE_MISMATCH_PENALTY` | 날짜 인식 검색 | `.env.example` 참고 |
 | `TOPIC_MATCH_BOOST` / `TOPIC_MISMATCH_PENALTY` | 토픽 인식 검색 | `.env.example` 참고 |
 | `ANONYMIZE_OUTPUT` 등 비식별화 토글 | UI / 답변 비식별화 | `.env.example` 참고 |
-| `ENABLE_LLM_NORMALIZATION` | KnowledgeCard 정규화 ON/OFF (기본 OFF) | `false` |
-| `NORMALIZATION_MAX_CARDS_PER_FILE` / `NORMALIZATION_CARD_SOURCE_WEIGHT` 등 | 정규화 동작 | `.env.example` 참고 |
-| `PRIORITIZE_KNOWLEDGE_CARDS` / `KNOWLEDGE_CARD_CONTENT_BOOST` 등 | 검색 단계 카드 우선순위 | `.env.example` 참고 |
-| `ANSWER_WITH_KNOWLEDGE_CARDS` / `MAX_PRIMARY_CARDS` / `MAX_RAW_EVIDENCE_CHUNKS` 등 | 답변 단계 카드 중심 prompt | `.env.example` 참고 |
+| `ENABLE_LLM_NORMALIZATION` | LLM-based Document Normalization ON/OFF (기본 OFF) | `false` |
+| `LLM_DOCUMENT_NORMALIZATION_MODEL` (legacy: `LLM_NORMALIZATION_MODEL`) | 정규화에 사용할 Gemini 모델 | `.env.example` 참고 |
+| `NORMALIZATION_MAX_DOCUMENTS_PER_FILE` (legacy: `NORMALIZATION_MAX_CARDS_PER_FILE`) / `NORMALIZED_DOCUMENT_SOURCE_WEIGHT` (legacy: `NORMALIZATION_CARD_SOURCE_WEIGHT`) 등 | 정규화 동작 | `.env.example` 참고 |
+| `PRIORITIZE_NORMALIZED_DOCUMENTS` (legacy: `PRIORITIZE_KNOWLEDGE_CARDS`) / `NORMALIZED_DOCUMENT_CONTENT_BOOST` (legacy: `KNOWLEDGE_CARD_CONTENT_BOOST`) 등 | 검색 단계 Normalized Document 우선순위 | `.env.example` 참고 |
+| `ANSWER_WITH_NORMALIZED_DOCUMENTS` (legacy: `ANSWER_WITH_KNOWLEDGE_CARDS`) / `MAX_PRIMARY_NORMALIZED_DOCUMENTS` (legacy: `MAX_PRIMARY_CARDS`) / `MAX_RAW_EVIDENCE_CHUNKS` 등 | 답변 단계 Normalized Document 중심 prompt | `.env.example` 참고 |
+
+> 위 신규 환경변수가 없으면 자동으로 legacy 이름의 환경변수를 fallback 으로 읽는다.
+> 기존 `.env` 가 있어도 그대로 동작한다.
 
 전체 항목은 `.env.example` 에 주석과 함께 정리되어 있다.
 
@@ -283,12 +310,12 @@ Windows 추가 주의사항
 | 페이지 | 역할 |
 | --- | --- |
 | `1_문서_업로드` | 카테고리 선택 후 파일 업로드 → `data/raw/<카테고리>/` 에 저장 |
-| `2_문서_색인` | 새 파일 색인 / Excel 한국어 요약 옵션 / KnowledgeCard 정규화 결과 카운트 표시 |
-| `3_업무_QA` | 질문 → 검색 → 답변. `answer_mode`, primary card 목록, retrieval_role 진단 표시 |
-| `4_검색_테스트` | 답변 생성 없이 retrieval 결과만 확인. content_type / card_type 필터 제공 |
+| `2_문서_색인` | 새 파일 색인 / Excel 한국어 요약 옵션 / LLM-based Document Normalization 결과 카운트 표시 |
+| `3_업무_QA` | 질문 → 검색 → 답변. `answer_mode`, primary Normalized Document 목록, retrieval_role 진단 표시 |
+| `4_검색_테스트` | 답변 생성 없이 retrieval 결과만 확인. content_type / normalized_document_type 필터 제공 |
 | `5_API_상태확인` | Gemini API Key / 모델 사용 가능 여부 점검 |
 | `6_Excel_요약관리` | Excel 시트별 한국어 업무 요약 재생성 / 캐시 확인 |
-| `7_지식카드_관리` | 정규화된 KnowledgeCard JSON / Markdown 을 read-only 로 확인 |
+| `7_지식카드_관리` | (UI 표시명: "정규화 문서 관리") 정규화된 Normalized Document JSON / Markdown 을 read-only 로 확인 |
 
 CLI 도 함께 제공한다.
 
@@ -311,17 +338,19 @@ python scripts/reset_vector_db.py           # ChromaDB / processed 초기화 (da
     `LOCAL_EMBEDDING_MODEL` 한 줄로 모델 교체 가능.
 - 검색
   - 점수 = `(1 - cosine_distance)` 기반 raw similarity 에 source / 카테고리 / 콘텐츠 유형 /
-    날짜 / 토픽 / KnowledgeCard / card_type 부스트가 곱해져 `final_score` 가 계산된다.
+    날짜 / 토픽 / Normalized Document / normalized_document_type 부스트가 곱해져
+    `final_score` 가 계산된다.
   - `MIN_SIMILARITY_SCORE`, `MIN_FINAL_SCORE`, `MAX_CHUNKS_PER_FILE`, `USE_MMR` 로
     품질/다양성을 통제할 수 있다.
   - `MIN_RETRIEVED_CHUNKS` 미만이면 Gemini Generation 을 호출하지 않고 "근거 부족" 안내 메시지
     를 반환한다 (비용 절감).
 - 답변
-  - `ANSWER_WITH_KNOWLEDGE_CARDS=true` 이고 통과 chunk 안에 primary_card 가 있으면
-    KnowledgeCard 중심 prompt 로 답변한다 (`answer_mode=knowledge_card`).
+  - `ANSWER_WITH_NORMALIZED_DOCUMENTS=true` (legacy: `ANSWER_WITH_KNOWLEDGE_CARDS=true`)
+    이고 통과 chunk 안에 primary Normalized Document 가 있으면 Normalized Document 중심
+    prompt 로 답변한다 (`answer_mode=knowledge_card` 라벨은 호환을 위해 유지).
   - 그 외에는 기존 raw chunk prompt 로 동작한다 (`answer_mode=raw_fallback`).
-  - 카드 타입에 따라 답변 형식이 default / communication_template / glossary 중 하나로
-    분기된다.
+  - Normalized Document type 에 따라 답변 형식이 default / communication_template /
+    glossary 중 하나로 분기된다.
   - 답변과 참고 근거 모두에서 사람 실명 / @멘션 / 정확한 시간 / 원본 날짜를 노출하지 않도록
     prompt 와 비식별화 가드가 작동한다.
 
@@ -337,15 +366,16 @@ python scripts/smoke_test.py
 python -m pytest tests -v
 
 # 3) 일부 기능별 테스트만
-python -m pytest tests/test_knowledge_card_schema.py    -v
-python -m pytest tests/test_normalization_store.py      -v
-python -m pytest tests/test_guide_normalizer.py         -v
-python -m pytest tests/test_slack_normalizer.py         -v
-python -m pytest tests/test_pipeline_normalization.py   -v
-python -m pytest tests/test_knowledge_card_viewer.py    -v
-python -m pytest tests/test_knowledge_card_retrieval.py -v
-python -m pytest tests/test_knowledge_card_qa.py        -v
-python -m pytest tests/test_retrieval_precision.py      -v
+python -m pytest tests/test_normalized_document_schema.py    -v
+python -m pytest tests/test_normalization_store.py           -v
+python -m pytest tests/test_guide_normalizer.py              -v
+python -m pytest tests/test_slack_normalizer.py              -v
+python -m pytest tests/test_pipeline_normalization.py        -v
+python -m pytest tests/test_normalized_document_viewer.py    -v
+python -m pytest tests/test_normalized_document_retrieval.py -v
+python -m pytest tests/test_normalized_document_qa.py        -v
+python -m pytest tests/test_legacy_compatibility.py          -v
+python -m pytest tests/test_retrieval_precision.py           -v
 ```
 
 > 모든 테스트는 외부 Gemini API 호출 없이 동작하도록 fake client / fake generator 로 작성되어
@@ -378,7 +408,7 @@ python -m pytest tests/test_retrieval_precision.py      -v
 | 색인 시 (`EMBEDDING_PROVIDER=gemini`) | 각 chunk 의 `embedding_text` | 임베딩 생성 |
 | 색인 시 (`EMBEDDING_PROVIDER=local`) | 전송 없음 | sentence-transformers 로 로컬 임베딩 |
 | Excel 한국어 요약 ON | 시트 단위 raw 표 텍스트 (cap 적용) | 요약 생성 |
-| KnowledgeCard 정규화 ON | 정제된 문서 본문 + 메타데이터 | 카드 생성 |
+| LLM-based Document Normalization ON | 정제된 문서 본문 + 메타데이터 | Normalized Document 생성 |
 | 업무 QA 답변 시 | 사용자 질문 + 검색된 chunk 컨텍스트 | 답변 생성 |
 | Query rewrite ON (기본 OFF) | 사용자 질문 | 검색 친화적 재작성 |
 | `4_검색_테스트` 페이지 | 질문 임베딩 1회 (`gemini` provider 한정) | 답변 생성 호출 없음 |
@@ -448,7 +478,7 @@ python -m pytest tests/test_retrieval_precision.py      -v
 - 임베딩 모델 A/B 테스트 자동화
 - retrieval hit rate / answer groundedness 지표화
 - 사용자 피드백 기반 evaluation
-- 카카오 / 메일 / Excel 영역으로 KnowledgeCard 정규화 확장
+- 카카오 / 메일 / Excel 영역으로 LLM-based Document Normalization 확장
 
 ---
 

@@ -1,13 +1,17 @@
 """
 card_viewer.py
 ==============
-Streamlit 지식카드 관리 UI 에서 사용하는 read-only helper.
+Streamlit 정규화 문서 관리 UI 에서 사용하는 read-only helper.
 
 Task 5 범위
 -----------
-- NormalizationStore 가 저장한 KnowledgeCard JSON / Markdown 을 읽어 목록화한다.
+- NormalizationStore 가 저장한 Normalized Document JSON / Markdown 을 읽어 목록화한다.
 - 요약 통계, 필터링, table 표시용 dict 변환을 제공한다.
 - raw 원문 파일에는 접근하지 않는다. UI 는 sanitized_markdown 중심으로만 표시한다.
+
+명칭 변경 노트:
+- 함수 이름 (``load_all_cards_from_store`` 등) 은 기존 import 호환을 위해 유지한다.
+- 새 코드는 동일한 helper 를 그대로 사용한다 (저장 포맷 동일).
 """
 from __future__ import annotations
 
@@ -17,7 +21,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Union
 
 from src.normalization.normalization_store import NormalizationStore
-from src.schemas import KnowledgeCard
+from src.schemas import KnowledgeCard, NormalizedDocument
 
 
 StoreOrPath = Union[NormalizationStore, Path, str]
@@ -34,7 +38,7 @@ def _as_path(value: StoreOrPath, *, subdir: str) -> Path:
 
 
 def list_normalized_json_files(store_or_path: StoreOrPath) -> List[Path]:
-    """NormalizationStore 또는 json directory 에서 KnowledgeCard JSON 파일 목록을 반환."""
+    """NormalizationStore 또는 json directory 에서 Normalized Document JSON 파일 목록을 반환."""
     json_dir = _as_path(store_or_path, subdir="json")
     if not json_dir.exists():
         return []
@@ -42,19 +46,19 @@ def list_normalized_json_files(store_or_path: StoreOrPath) -> List[Path]:
 
 
 def list_normalized_markdown_files(store_or_path: StoreOrPath) -> List[Path]:
-    """NormalizationStore 또는 markdown directory 에서 KnowledgeCard Markdown 파일 목록을 반환."""
+    """NormalizationStore 또는 markdown directory 에서 Normalized Document Markdown 파일 목록을 반환."""
     markdown_dir = _as_path(store_or_path, subdir="markdown")
     if not markdown_dir.exists():
         return []
     return sorted(markdown_dir.glob("*.md"), key=lambda p: p.name.lower())
 
 
-def load_all_cards_from_store(store: NormalizationStore) -> List[KnowledgeCard]:
-    """store.json_dir 아래 모든 KnowledgeCard JSON 을 읽어 평탄화한다.
+def load_all_cards_from_store(store: NormalizationStore) -> List[NormalizedDocument]:
+    """store.json_dir 아래 모든 Normalized Document JSON 을 읽어 평탄화한다.
 
     손상된 JSON 파일은 UI 전체를 깨지 않도록 건너뛴다.
     """
-    cards: List[KnowledgeCard] = []
+    cards: List[NormalizedDocument] = []
     for path in list_normalized_json_files(store):
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
@@ -66,14 +70,14 @@ def load_all_cards_from_store(store: NormalizationStore) -> List[KnowledgeCard]:
             if not isinstance(item, dict):
                 continue
             try:
-                cards.append(KnowledgeCard.from_dict(item))
+                cards.append(NormalizedDocument.from_dict(item))
             except TypeError:
                 continue
     return cards
 
 
-def summarize_cards(cards: Iterable[KnowledgeCard]) -> Dict[str, Any]:
-    """카드 수와 주요 분포를 계산한다."""
+def summarize_cards(cards: Iterable[NormalizedDocument]) -> Dict[str, Any]:
+    """Normalized Document 수와 주요 분포를 계산한다."""
     card_list = list(cards or [])
     return {
         "total_cards": len(card_list),
@@ -84,16 +88,16 @@ def summarize_cards(cards: Iterable[KnowledgeCard]) -> Dict[str, Any]:
 
 
 def filter_cards(
-    cards: Iterable[KnowledgeCard],
+    cards: Iterable[NormalizedDocument],
     *,
     card_type: Optional[str] = None,
     primary_topic: Optional[str] = None,
     source_file_name: Optional[str] = None,
     query: Optional[str] = None,
-) -> List[KnowledgeCard]:
+) -> List[NormalizedDocument]:
     """card_type / primary_topic / source_file_name / text query 로 필터링한다."""
     q = (query or "").strip().lower()
-    out: List[KnowledgeCard] = []
+    out: List[NormalizedDocument] = []
     for card in cards or []:
         if card_type and card_type != "전체" and card.card_type != card_type:
             continue
@@ -107,7 +111,7 @@ def filter_cards(
     return out
 
 
-def card_to_display_dict(card: KnowledgeCard) -> Dict[str, Any]:
+def card_to_display_dict(card: NormalizedDocument) -> Dict[str, Any]:
     """Streamlit dataframe/table 표시용 납작한 dict."""
     return {
         "title": card.title,
@@ -122,12 +126,12 @@ def card_to_display_dict(card: KnowledgeCard) -> Dict[str, Any]:
     }
 
 
-def markdown_for_card(card: KnowledgeCard) -> str:
+def markdown_for_card(card: NormalizedDocument) -> str:
     """UI preview 에 사용할 sanitized markdown 을 반환한다."""
     return (card.sanitized_markdown or card.to_markdown() or "").strip()
 
 
-def _search_blob(card: KnowledgeCard) -> str:
+def _search_blob(card: NormalizedDocument) -> str:
     parts: List[str] = [
         card.title or "",
         card.summary or "",
@@ -141,3 +145,14 @@ def _search_blob(card: KnowledgeCard) -> str:
     ):
         parts.extend([v for v in (values or []) if isinstance(v, str)])
     return "\n".join(parts).lower()
+
+
+# ---------------------------------------------------------------------------
+# 신규 명칭 alias — 새 코드는 가능하면 이 이름을 사용한다.
+# (legacy 함수명도 동일 동작이므로 그대로 사용 가능.)
+# ---------------------------------------------------------------------------
+load_all_normalized_documents_from_store = load_all_cards_from_store
+summarize_normalized_documents = summarize_cards
+filter_normalized_documents = filter_cards
+normalized_document_to_display_dict = card_to_display_dict
+markdown_for_normalized_document = markdown_for_card

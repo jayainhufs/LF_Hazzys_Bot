@@ -16,6 +16,16 @@ final_score = similarity_score
 - query 에 날짜/주제(topic) 가 들어 있으면 chunk metadata 와 매칭해
   date / topic boost / penalty 를 추가로 적용한다.
 - diversity 보정용 MMR 비슷한 휴리스틱(`apply_diversity_penalty`) 도 함께 제공한다.
+
+명칭 변경 노트:
+- 이 모듈의 "knowledge_card" 관련 helper 들은 "Normalized Document" 명칭으로
+  바뀌었다. 기존 import 호환을 위해 ``apply_knowledge_card_priority`` /
+  ``is_knowledge_card_chunk`` / ``card_type_boost_for`` 는 새 함수의
+  alias 로 그대로 유지한다.
+- chunk metadata 는 신규 표준 ``content_type="normalized_document"`` 와
+  legacy ``content_type="knowledge_card"`` 양쪽을 모두 인식한다.
+- chunk metadata 의 ``card_type`` 은 ``normalized_document_type`` 으로
+  대체될 수 있으며, 둘 다 동일하게 인식된다.
 """
 from __future__ import annotations
 
@@ -102,7 +112,7 @@ _INTENT_ISSUE_LOOKUP = (
     "이슈", "문제", "어려웠", "발생한", "발송 관련", "어땠어",
     "안 됨", "안됨", "실패", "오류",
 )
-# Task 6: knowledge_card 우선순위를 위한 추가 intent
+# Task 6: Normalized Document 우선순위를 위한 추가 intent
 _INTENT_COMMUNICATION = ("문안", "메일", "공유", "전달", "회신")
 _INTENT_GLOSSARY = ("용어", "무슨 뜻", "정의")
 
@@ -501,10 +511,10 @@ def apply_diversity_penalty(
 
 
 # ---------------------------------------------------------------------------
-# Task 6: KnowledgeCard 우선 retrieval helpers
+# Task 6: Normalized Document 우선 retrieval helpers
 # ---------------------------------------------------------------------------
-# card_type → 매칭하는 query intent label
-_CARD_TYPE_INTENT_MAP: Dict[str, str] = {
+# normalized_document_type → 매칭하는 query intent label
+_NORMALIZED_DOCUMENT_TYPE_INTENT_MAP: Dict[str, str] = {
     "workflow": "procedure",
     "checklist": "procedure",
     "faq": "explanation",
@@ -513,21 +523,31 @@ _CARD_TYPE_INTENT_MAP: Dict[str, str] = {
     "communication_template": "communication",
     "glossary": "glossary",
 }
+# legacy alias (기존 import 호환)
+_CARD_TYPE_INTENT_MAP = _NORMALIZED_DOCUMENT_TYPE_INTENT_MAP
 
-# card_type 매칭 시 추가 부스트 배수.
-# (intent 부합 카드는 spec boost 위에 1.10x 더 곱해서 강조한다.)
-_CARD_TYPE_INTENT_BONUS = 1.10
+# normalized_document_type 매칭 시 추가 부스트 배수.
+# (intent 부합 문서는 spec boost 위에 1.10x 더 곱해서 강조한다.)
+_NORMALIZED_DOCUMENT_TYPE_INTENT_BONUS = 1.10
+# legacy alias
+_CARD_TYPE_INTENT_BONUS = _NORMALIZED_DOCUMENT_TYPE_INTENT_BONUS
 
 
-def is_knowledge_card_chunk(
+# 신규 표준 content_type / source_type
+_NORMALIZED_DOCUMENT_CONTENT_TYPES = {"normalized_document", "knowledge_card"}
+_NORMALIZED_DOCUMENT_SOURCE_TYPES = {"llm_normalized"}
+
+
+def is_normalized_document_chunk(
     chunk_or_meta: Any,
 ) -> bool:
     """
-    chunk 가 KnowledgeCard 정규화 결과인지 판정.
+    chunk 가 LLM-based Document Normalization 결과 (Normalized Document) 인지 판정.
 
-    - content_type == "knowledge_card"
-    - 또는 source_type == "llm_normalized"
-    위 두 조건 중 하나라도 만족하면 knowledge_card 로 본다.
+    아래 조건 중 하나라도 만족하면 Normalized Document 로 본다:
+    - content_type == "normalized_document" (신규 표준)
+    - content_type == "knowledge_card"      (legacy compatibility)
+    - source_type  == "llm_normalized"
 
     `chunk_or_meta` 는 RetrievedChunk 또는 dict-like metadata 모두 허용.
     """
@@ -554,33 +574,50 @@ def is_knowledge_card_chunk(
         )
         content_type = str(content_type or "").lower()
         source_type = str(source_type or "").lower()
-    if content_type == "knowledge_card":
+    if content_type in _NORMALIZED_DOCUMENT_CONTENT_TYPES:
         return True
-    if source_type == "llm_normalized":
+    if source_type in _NORMALIZED_DOCUMENT_SOURCE_TYPES:
         return True
     return False
 
 
-def card_type_boost_for(
-    card_type: Optional[str],
+# legacy alias — 기존 import 유지
+is_knowledge_card_chunk = is_normalized_document_chunk
+
+
+def _resolve_normalized_document_type(meta: Dict[str, Any]) -> str:
+    """metadata 에서 normalized_document_type 을 신규/legacy 키 양쪽에서 읽어 온다."""
+    if not isinstance(meta, dict):
+        return ""
+    val = (
+        meta.get("normalized_document_type")
+        or meta.get("card_type")
+        or ""
+    )
+    return str(val or "").strip().lower()
+
+
+def normalized_document_type_boost_for(
+    document_type: Optional[str],
     query_intent: Optional[List[str]] = None,
     *,
     settings_obj: Optional[Any] = None,
 ) -> Tuple[float, bool]:
     """
-    knowledge_card 의 card_type 별 boost 와 query intent 부합 여부 반환.
+    Normalized Document 의 document_type 별 boost 와 query intent 부합 여부 반환.
 
     동작:
-    - card_type 별 spec boost (settings 의 *_card_boost) 를 기본 적용한다.
-    - query_intent 와 card_type 이 매칭되면 추가로 1.10x 를 곱해 강조한다.
-    - card_type 이 비어 있거나 매핑에 없으면 (1.0, False) 반환.
+    - document_type 별 spec boost (settings 의 *_card_boost) 를 기본 적용한다.
+      (env 이름은 legacy 호환 유지를 위해 그대로 둔다.)
+    - query_intent 와 document_type 이 매칭되면 추가로 1.10x 를 곱해 강조한다.
+    - document_type 이 비어 있거나 매핑에 없으면 (1.0, False) 반환.
 
     Returns
     -------
     (boost, intent_match)
     """
     s = settings_obj or settings
-    ct = (card_type or "").strip().lower()
+    ct = (document_type or "").strip().lower()
     if not ct:
         return 1.0, False
 
@@ -596,23 +633,27 @@ def card_type_boost_for(
     }
     boost = boost_map.get(ct, 1.0)
 
-    expected_intent = _CARD_TYPE_INTENT_MAP.get(ct)
+    expected_intent = _NORMALIZED_DOCUMENT_TYPE_INTENT_MAP.get(ct)
     intents = list(query_intent or [])
     intent_match = bool(expected_intent and expected_intent in intents)
     if intent_match:
-        boost *= _CARD_TYPE_INTENT_BONUS
+        boost *= _NORMALIZED_DOCUMENT_TYPE_INTENT_BONUS
     return boost, intent_match
+
+
+# legacy alias — 기존 import 유지
+card_type_boost_for = normalized_document_type_boost_for
 
 
 def _normalized_file_keys(candidates: List[RetrievedChunk]) -> set:
     """
-    knowledge_card chunk 가 포함된 source_file_hash / file_name 집합을 반환.
+    Normalized Document chunk 가 포함된 source_file_hash / file_name 집합을 반환.
 
     raw chunk 가 같은 파일 출신인지 판정할 때 사용한다.
     """
     keys: set = set()
     for c in candidates or []:
-        if not is_knowledge_card_chunk(c):
+        if not is_normalized_document_chunk(c):
             continue
         md = getattr(c, "metadata", {}) or {}
         fh = md.get("source_file_hash") or md.get("file_hash")
@@ -639,28 +680,32 @@ def _chunk_belongs_to_normalized_file(
     return False
 
 
-def apply_knowledge_card_priority(
+def apply_normalized_document_priority(
     candidates: List[RetrievedChunk],
     *,
     query_metadata: Optional[Dict[str, Any]] = None,
     settings_obj: Optional[Any] = None,
 ) -> List[RetrievedChunk]:
     """
-    rerank_simple 결과를 받은 뒤 knowledge_card 를 raw chunk 보다 우선시키는 후처리.
+    rerank_simple 결과를 받은 뒤 Normalized Document 를 raw chunk 보다 우선시키는 후처리.
 
     동작:
-    - PRIORITIZE_KNOWLEDGE_CARDS=false 면 metadata 진단 필드만 채우고 점수는 유지.
-    - PRIORITIZE_KNOWLEDGE_CARDS=true:
-        - knowledge_card chunk:
-            final_score *= KNOWLEDGE_CARD_CONTENT_BOOST * card_type_boost
-            retrieval_role = "primary_card"
+    - PRIORITIZE_NORMALIZED_DOCUMENTS (legacy: PRIORITIZE_KNOWLEDGE_CARDS) = false 면
+      metadata 진단 필드만 채우고 점수는 유지.
+    - true 인 경우:
+        - Normalized Document chunk:
+            final_score *= NORMALIZED_DOCUMENT_CONTENT_BOOST
+                          * normalized_document_type_boost
+            retrieval_role = "primary_card"  (legacy 라벨 유지)
         - 같은 source_file 의 raw chunk:
             final_score *= RAW_EVIDENCE_BOOST
             retrieval_role = "raw_evidence"
         - 그 외 raw chunk:
             retrieval_role = "raw_fallback"
-    - 모든 chunk metadata 에 knowledge_card_boost / card_type_boost / card_type_match /
-      retrieval_role 진단 필드를 기록한다.
+
+    metadata 호환:
+    - normalized_document_type / card_type 둘 다 인식 (신규 우선, legacy fallback).
+    - 진단 필드는 신규 / legacy 키를 모두 채워, 기존 UI 와의 호환을 유지한다.
 
     candidates 는 final_score 내림차순으로 재정렬되어 반환된다.
     """
@@ -682,9 +727,13 @@ def apply_knowledge_card_priority(
         if md is None:
             md = {}
             c.metadata = md
-        is_kc = is_knowledge_card_chunk(c)
+        is_kc = is_normalized_document_chunk(c)
 
         if not enabled:
+            md.setdefault("normalized_document_boost", 1.0)
+            md.setdefault("normalized_document_type_boost", 1.0)
+            md.setdefault("normalized_document_type_match", False)
+            # legacy 진단 필드 (기존 UI 호환)
             md.setdefault("knowledge_card_boost", 1.0)
             md.setdefault("card_type_boost", 1.0)
             md.setdefault("card_type_match", False)
@@ -695,16 +744,23 @@ def apply_knowledge_card_priority(
             continue
 
         if is_kc:
-            ct = md.get("card_type")
-            ct_boost, intent_match = card_type_boost_for(
-                ct, query_intent, settings_obj=s
+            doc_type = _resolve_normalized_document_type(md)
+            ct_boost, intent_match = normalized_document_type_boost_for(
+                doc_type, query_intent, settings_obj=s
             )
             c.final_score = float(c.final_score or 0.0) * kc_boost * ct_boost
+            md["normalized_document_boost"] = round(kc_boost, 6)
+            md["normalized_document_type_boost"] = round(ct_boost, 6)
+            md["normalized_document_type_match"] = bool(intent_match)
+            # legacy 진단 필드 (기존 UI 호환)
             md["knowledge_card_boost"] = round(kc_boost, 6)
             md["card_type_boost"] = round(ct_boost, 6)
             md["card_type_match"] = bool(intent_match)
             md["retrieval_role"] = "primary_card"
         else:
+            md["normalized_document_boost"] = 1.0
+            md["normalized_document_type_boost"] = 1.0
+            md["normalized_document_type_match"] = False
             md["knowledge_card_boost"] = 1.0
             md["card_type_boost"] = 1.0
             md["card_type_match"] = False
@@ -717,6 +773,10 @@ def apply_knowledge_card_priority(
 
     candidates.sort(key=lambda x: x.final_score, reverse=True)
     return candidates
+
+
+# legacy alias — 기존 import 유지
+apply_knowledge_card_priority = apply_normalized_document_priority
 
 
 # ---------------------------------------------------------------------------

@@ -52,10 +52,10 @@ with col3:
     )
 with col4:
     enable_normalization = st.toggle(
-        "LLM 지식카드 정규화",
+        "LLM 기반 문서 정규화",
         value=settings.enable_llm_normalization,
         help=(
-            "Guide/Slack 파일 색인 시 KnowledgeCard 정규화를 함께 수행합니다. "
+            "Guide/Slack 파일 색인 시 LLM-based Document Normalization 을 함께 수행합니다. "
             "Gemini API 호출 비용이 발생할 수 있습니다."
         ),
     )
@@ -66,10 +66,10 @@ if advanced_mode:
 if enable_normalization:
     st.info(
         "ENABLE_LLM_NORMALIZATION 이 켜져 있습니다. "
-        "Guide/Slack 파일은 raw chunk 색인 후 KnowledgeCard 정규화를 함께 수행합니다."
+        "Guide/Slack 파일은 raw chunk 색인 후 LLM-based Document Normalization 을 함께 수행합니다."
     )
 else:
-    st.caption("LLM 지식카드 정규화: OFF (기존 raw ingest 흐름만 실행)")
+    st.caption("LLM 기반 문서 정규화: OFF (기존 raw ingest 흐름만 실행)")
 
 # ----------------------------- 대상 파일 미리보기 --------------------------
 files = discover_files()

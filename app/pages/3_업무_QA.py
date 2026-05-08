@@ -98,39 +98,45 @@ if run:
     m3.metric("탈락 (dropped)", summary.get("dropped_count", 0))
     m4.metric("top_k", summary.get("top_k", k))
 
-    # Task 7: KnowledgeCard 중심 답변 진단 메트릭
+    # Task 7: Normalized Document 중심 답변 진단 메트릭
     answer_mode = result.get("answer_mode") or "default"
     answer_format_label = result.get("answer_format_label") or "default"
-    primary_card_count = int(result.get("primary_card_count", 0))
+    primary_card_count = int(
+        result.get("primary_normalized_document_count", result.get("primary_card_count", 0))
+    )
     raw_evidence_count = int(result.get("raw_evidence_count", 0))
     raw_fallback_count = int(result.get("raw_fallback_count", 0))
-    primary_cards = result.get("primary_cards") or []
+    primary_documents = result.get("primary_normalized_documents") or result.get("primary_cards") or []
 
     m5, m6, m7, m8 = st.columns(4)
     m5.metric("answer_mode", answer_mode)
-    m6.metric("primary_card", primary_card_count)
+    m6.metric("primary_normalized_document", primary_card_count)
     m7.metric("raw_evidence", raw_evidence_count)
     m8.metric("raw_fallback", raw_fallback_count)
     st.caption(
         f"answer_format_label=`{answer_format_label}` · "
-        f"answer_with_knowledge_cards=`{settings.answer_with_knowledge_cards}` · "
-        f"max_primary_cards=`{settings.max_primary_cards}` · "
+        f"answer_with_normalized_documents=`{settings.answer_with_knowledge_cards}` · "
+        f"max_primary_normalized_documents=`{settings.max_primary_cards}` · "
         f"max_raw_evidence_chunks=`{settings.max_raw_evidence_chunks}` · "
         f"include_raw_evidence_appendix=`{settings.include_raw_evidence_appendix}` · "
-        f"template=`{result.get('knowledge_card_answer_template_version')}`"
+        f"template=`{result.get('normalized_document_answer_template_version') or result.get('knowledge_card_answer_template_version')}`"
     )
 
-    if primary_cards:
+    if primary_documents:
         with st.expander(
-            f"사용된 KnowledgeCard ({len(primary_cards)}개)", expanded=False
+            f"사용된 Normalized Document ({len(primary_documents)}개)", expanded=False
         ):
             rows = []
-            for i, c in enumerate(primary_cards, start=1):
+            for i, c in enumerate(primary_documents, start=1):
                 md = c.metadata or {}
                 rows.append({
                     "rank": i,
-                    "card_id": md.get("card_id") or "-",
-                    "card_type": md.get("card_type") or "-",
+                    "normalized_document_id": (
+                        md.get("normalized_document_id") or md.get("card_id") or "-"
+                    ),
+                    "normalized_document_type": (
+                        md.get("normalized_document_type") or md.get("card_type") or "-"
+                    ),
                     "primary_topic": md.get("primary_topic") or "-",
                     "task_type": md.get("task_type") or "-",
                     "source_file_name": c.file_name,
@@ -213,7 +219,7 @@ if run:
             role = md.get("retrieval_role") or "-"
             role_badge = ""
             if role == "primary_card":
-                role_badge = " · 🟣 PRIMARY CARD"
+                role_badge = " · 🟣 PRIMARY NORMALIZED DOC"
             elif role == "raw_evidence":
                 role_badge = " · 🔵 RAW EVIDENCE"
             title = (
@@ -227,15 +233,23 @@ if run:
                     f"- **passed_threshold**: `{c.passed_threshold}`"
                     + (f" · filter_reason=`{c.filter_reason}`" if c.filter_reason else "")
                 )
+                nd_id = md.get("normalized_document_id") or md.get("card_id") or "-"
+                nd_type = md.get("normalized_document_type") or md.get("card_type") or "-"
+                nd_match = bool(
+                    md.get("normalized_document_type_match")
+                    or md.get("card_type_match", False)
+                )
+                nd_boost = md.get("normalized_document_boost") or md.get("knowledge_card_boost")
+                nd_type_boost = md.get("normalized_document_type_boost") or md.get("card_type_boost")
                 st.markdown(
                     f"- **retrieval_role**: `{role}` · "
                     f"**content_type**: `{c.content_type}` · "
                     f"**source_type**: `{c.source_type}`\n"
-                    f"- **card_id**: `{md.get('card_id') or '-'}` · "
-                    f"**card_type**: `{md.get('card_type') or '-'}` · "
-                    f"**card_type_match**: `{bool(md.get('card_type_match', False))}`\n"
-                    f"- **knowledge_card_boost**: `{md.get('knowledge_card_boost')}` · "
-                    f"**card_type_boost**: `{md.get('card_type_boost')}`\n"
+                    f"- **normalized_document_id**: `{nd_id}` · "
+                    f"**normalized_document_type**: `{nd_type}` · "
+                    f"**type_match**: `{nd_match}`\n"
+                    f"- **normalized_document_boost**: `{nd_boost}` · "
+                    f"**normalized_document_type_boost**: `{nd_type_boost}`\n"
                     f"- **parent_raw_chunk_ids**: `{md.get('parent_raw_chunk_ids') or []}`"
                 )
                 st.markdown(

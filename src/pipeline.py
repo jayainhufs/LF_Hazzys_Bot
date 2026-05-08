@@ -239,7 +239,7 @@ def ingest_file(
         store.save_document(document)
         store.save_chunks(document_id, chunks)
 
-        # 7.5) (옵션) LLM 기반 KnowledgeCard normalization branch
+        # 7.5) (옵션) LLM-based Document Normalization branch
         #      - ENABLE_LLM_NORMALIZATION=false 일 때는 절대 실행되지 않는다.
         #      - normalization 실패는 raw ingest 흐름에 영향을 주지 않는다.
         use_normalization = (

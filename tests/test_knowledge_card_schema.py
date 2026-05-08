@@ -1,15 +1,24 @@
-"""KnowledgeCard schema 단위 테스트."""
+"""NormalizedDocument schema 단위 테스트 (legacy 명: KnowledgeCard schema 테스트).
+
+명칭 변경 노트
+----------------
+- 이 파일은 기존 ``test_knowledge_card_schema.py`` 명칭을 그대로 유지한다.
+  (새로 추가된 ``tests/test_normalized_document_schema.py`` 가 동일한 테스트를
+  새 명칭 기준으로 다시 실행한다.)
+- 새 코드는 ``NormalizedDocument`` 를 우선 사용한다. 기존 ``KnowledgeCard`` 은 그대로
+  alias 로 동작해야 하며, 이 파일은 그 호환성을 함께 검증한다.
+"""
 from __future__ import annotations
 
-from src.schemas import KnowledgeCard
+from src.schemas import KnowledgeCard, NormalizedDocument
 
 
-def _sample_card(**overrides) -> KnowledgeCard:
+def _sample_document(**overrides) -> NormalizedDocument:
     data = {
         "card_id": "kc_001",
         "card_type": "workflow",
         "title": "메타 캠페인 세팅 체크",
-        "summary": "메타 캠페인 세팅 시 확인해야 할 핵심 절차를 정리한 카드.",
+        "summary": "메타 캠페인 세팅 시 확인해야 할 핵심 절차를 정리한 정규화 문서.",
         "source_file_name": "[2026년 4월 29일 TODO].txt",
         "source_file_hash": "a" * 64,
         "source_category": "slack",
@@ -39,35 +48,63 @@ def _sample_card(**overrides) -> KnowledgeCard:
         "metadata": {"prompt_version": "mock-v1"},
     }
     data.update(overrides)
-    return KnowledgeCard(**data)
+    return NormalizedDocument(**data)
 
 
-def test_knowledge_card_can_be_created():
-    card = _sample_card()
-    assert card.card_id == "kc_001"
-    assert card.card_type == "workflow"
-    assert card.topic_tags == ["meta"]
+# --- backwards compatibility -------------------------------------------------
+
+
+def test_knowledge_card_alias_is_normalized_document():
+    """legacy ``KnowledgeCard`` 가 ``NormalizedDocument`` 의 alias 인지 확인."""
+    assert KnowledgeCard is NormalizedDocument
+
+
+def test_normalized_document_can_be_constructed_via_legacy_alias():
+    legacy = KnowledgeCard(
+        card_id="kc_alias",
+        card_type="faq",
+        title="alias title",
+        summary="alias summary",
+        source_file_name="x.txt",
+        source_file_hash="b" * 64,
+        source_category="guide",
+        source_type="guide",
+    )
+    assert isinstance(legacy, NormalizedDocument)
+    # 신규 명칭 property 가 동일 값을 반환해야 한다
+    assert legacy.normalized_document_id == "kc_alias"
+    assert legacy.normalized_document_type == "faq"
+
+
+# --- core schema -------------------------------------------------------------
+
+
+def test_normalized_document_can_be_created():
+    doc = _sample_document()
+    assert doc.normalized_document_id == "kc_001"
+    assert doc.normalized_document_type == "workflow"
+    assert doc.topic_tags == ["meta"]
 
 
 def test_to_dict_from_dict_roundtrip():
-    card = _sample_card()
-    restored = KnowledgeCard.from_dict(card.to_dict())
-    assert restored == card
+    doc = _sample_document()
+    restored = NormalizedDocument.from_dict(doc.to_dict())
+    assert restored == doc
 
 
 def test_from_dict_handles_missing_optional_lists():
-    data = _sample_card().to_dict()
+    data = _sample_document().to_dict()
     data["topic_tags"] = None
     data["steps"] = None
     data["metadata"] = None
-    restored = KnowledgeCard.from_dict(data)
+    restored = NormalizedDocument.from_dict(data)
     assert restored.topic_tags == []
     assert restored.steps == []
     assert restored.metadata == {}
 
 
 def test_to_markdown_contains_required_sections():
-    md = _sample_card().to_markdown()
+    md = _sample_document().to_markdown()
     assert "# 메타 캠페인 세팅 체크" in md
     assert "- card_type: workflow" in md
     assert "- primary_topic: meta" in md
@@ -85,18 +122,18 @@ def test_to_markdown_contains_required_sections():
 
 
 def test_to_markdown_renders_evidence_spans():
-    md = _sample_card().to_markdown()
+    md = _sample_document().to_markdown()
     assert "section: 4/29 동제 중간 TODO" in md
     assert "chunk_index: 2" in md
     assert "캠페인 및 광고세트 세팅 항목" in md
 
 
 def test_validate_minimum_success():
-    assert _sample_card().validate_minimum() is True
+    assert _sample_document().validate_minimum() is True
 
 
 def test_validate_minimum_allows_sanitized_markdown_as_body():
-    card = _sample_card(
+    doc = _sample_document(
         prerequisites=[],
         steps=[],
         checkpoints=[],
@@ -107,13 +144,13 @@ def test_validate_minimum_allows_sanitized_markdown_as_body():
         evidence_spans=[],
         sanitized_markdown="# 별도 정규화 카드\n\n본문",
     )
-    assert card.validate_minimum() is True
+    assert doc.validate_minimum() is True
 
 
 def test_validate_minimum_fails_without_required_fields():
-    assert _sample_card(card_id="").validate_minimum() is False
-    assert _sample_card(card_type="").validate_minimum() is False
-    assert _sample_card(card_type="unknown").validate_minimum() is False
-    assert _sample_card(title="").validate_minimum() is False
-    assert _sample_card(summary="").validate_minimum() is False
-    assert _sample_card(source_file_name="").validate_minimum() is False
+    assert _sample_document(card_id="").validate_minimum() is False
+    assert _sample_document(card_type="").validate_minimum() is False
+    assert _sample_document(card_type="unknown").validate_minimum() is False
+    assert _sample_document(title="").validate_minimum() is False
+    assert _sample_document(summary="").validate_minimum() is False
+    assert _sample_document(source_file_name="").validate_minimum() is False

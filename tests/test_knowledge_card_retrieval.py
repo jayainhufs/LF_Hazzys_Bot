@@ -1,10 +1,18 @@
 """
 test_knowledge_card_retrieval.py
 ================================
-Task 6: 검색 단계에서 knowledge_card 우선 retrieval / reranker 단위 테스트.
+Task 6: 검색 단계에서 Normalized Document 우선 retrieval / reranker 단위 테스트.
 
 외부 Gemini API / ChromaDB 호출 없이 RetrievedChunk 를 직접 만들어
 reranker / retriever 동작을 검증한다.
+
+명칭 변경 노트
+----------------
+- ``KnowledgeCard`` 개념은 ``NormalizedDocument`` 로 교체되었다.
+- 이 파일은 기존 import (``apply_knowledge_card_priority`` /
+  ``is_knowledge_card_chunk`` / ``card_type_boost_for``) 가 legacy alias 로
+  계속 동작하는지 함께 검증하는 역할을 한다.
+- 신규 명칭에 기반한 추가 시나리오는 ``tests/test_legacy_compatibility.py`` 에 있다.
 """
 from __future__ import annotations
 

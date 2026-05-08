@@ -155,8 +155,10 @@ class Settings:
     anonymized_date_label: str = "업무일"
     anonymized_time_label: str = "시간대"
 
-    # ----- LLM 기반 지식카드 정규화 (Task 1: 설정만 준비) -----
+    # ----- LLM-based Document Normalization (Task 1: 설정만 준비) -----
     enable_llm_normalization: bool = False
+    # 신규: LLM_DOCUMENT_NORMALIZATION_MODEL
+    # legacy: LLM_NORMALIZATION_MODEL (fallback)
     llm_normalization_model: str = "gemini-2.5-flash-lite"
     normalization_output_dir: Path = field(
         default_factory=lambda: PROJECT_ROOT / "data" / "processed" / "normalized"
@@ -165,17 +167,23 @@ class Settings:
         default_factory=lambda: PROJECT_ROOT / "data" / "processed" / "normalized" / "cache"
     )
     normalization_max_chars_per_call: int = 18000
+    # 신규: NORMALIZATION_MAX_DOCUMENTS_PER_FILE
+    # legacy: NORMALIZATION_MAX_CARDS_PER_FILE (fallback)
     normalization_max_cards_per_file: int = 30
     normalization_temperature: float = 0.1
     normalization_use_anonymized_input: bool = True
     normalization_save_json: bool = True
     normalization_save_markdown: bool = True
+    # 신규: NORMALIZED_DOCUMENT_SOURCE_WEIGHT
+    # legacy: NORMALIZATION_CARD_SOURCE_WEIGHT (fallback)
     normalization_card_source_weight: float = 1.25
     normalization_parent_raw_top_k: int = 3
 
-    # ----- KnowledgeCard 우선 retrieval (Task 6) -----
-    # PRIORITIZE_KNOWLEDGE_CARDS=true 면 reranker/retriever 가 knowledge_card chunk 를
-    # raw chunk 보다 우선 반환한다. raw chunk 는 fallback / parent evidence 용도로 유지.
+    # ----- Normalized Document 우선 retrieval (Task 6) -----
+    # PRIORITIZE_NORMALIZED_DOCUMENTS=true 면 reranker/retriever 가
+    # normalized_document chunk 를 raw chunk 보다 우선 반환한다.
+    # raw chunk 는 fallback / parent evidence 용도로 유지.
+    # legacy alias: PRIORITIZE_KNOWLEDGE_CARDS, KNOWLEDGE_CARD_CONTENT_BOOST.
     prioritize_knowledge_cards: bool = True
     knowledge_card_content_boost: float = 1.35
     workflow_card_boost: float = 1.30
@@ -188,14 +196,66 @@ class Settings:
     enable_parent_raw_evidence: bool = True
     parent_raw_evidence_top_k: int = 2
 
-    # ----- KnowledgeCard 중심 답변 (Task 7) -----
-    # ANSWER_WITH_KNOWLEDGE_CARDS=true 면 QA prompt 가 primary_card 를 1차 근거로 사용한다.
-    # raw evidence/fallback 은 보조 또는 fallback 용도로만 사용한다.
+    # ----- Normalized Document 중심 답변 (Task 7) -----
+    # ANSWER_WITH_NORMALIZED_DOCUMENTS=true 면 QA prompt 가 primary normalized
+    # document 를 1차 근거로 사용한다. raw evidence/fallback 은 보조용.
+    # legacy alias: ANSWER_WITH_KNOWLEDGE_CARDS, MAX_PRIMARY_CARDS.
     answer_with_knowledge_cards: bool = True
     max_primary_cards: int = 5
     max_raw_evidence_chunks: int = 3
     include_raw_evidence_appendix: bool = True
-    knowledge_card_answer_template_version: str = "knowledge_card_v1"
+    knowledge_card_answer_template_version: str = "normalized_document_v1"
+
+    # ------------------------------------------------------------------
+    # 신규 명칭 alias property — 새 호출자가 새 이름으로도 같은 설정에 접근 가능
+    # ------------------------------------------------------------------
+    @property
+    def prioritize_normalized_documents(self) -> bool:
+        return self.prioritize_knowledge_cards
+
+    @prioritize_normalized_documents.setter
+    def prioritize_normalized_documents(self, value: bool) -> None:
+        self.prioritize_knowledge_cards = bool(value)
+
+    @property
+    def normalized_document_content_boost(self) -> float:
+        return self.knowledge_card_content_boost
+
+    @normalized_document_content_boost.setter
+    def normalized_document_content_boost(self, value: float) -> None:
+        self.knowledge_card_content_boost = float(value)
+
+    @property
+    def answer_with_normalized_documents(self) -> bool:
+        return self.answer_with_knowledge_cards
+
+    @answer_with_normalized_documents.setter
+    def answer_with_normalized_documents(self, value: bool) -> None:
+        self.answer_with_knowledge_cards = bool(value)
+
+    @property
+    def max_primary_normalized_documents(self) -> int:
+        return self.max_primary_cards
+
+    @max_primary_normalized_documents.setter
+    def max_primary_normalized_documents(self, value: int) -> None:
+        self.max_primary_cards = int(value)
+
+    @property
+    def normalized_document_answer_template_version(self) -> str:
+        return self.knowledge_card_answer_template_version
+
+    @normalized_document_answer_template_version.setter
+    def normalized_document_answer_template_version(self, value: str) -> None:
+        self.knowledge_card_answer_template_version = str(value)
+
+    @property
+    def llm_document_normalization_model(self) -> str:
+        return self.llm_normalization_model
+
+    @llm_document_normalization_model.setter
+    def llm_document_normalization_model(self, value: str) -> None:
+        self.llm_normalization_model = str(value)
 
     # ----- 카테고리 → raw 폴더 -----
     category_dirs: dict = field(default_factory=lambda: {
@@ -311,12 +371,14 @@ class Settings:
             _env("ANONYMIZED_TIME_LABEL", s.anonymized_time_label) or s.anonymized_time_label
         )
 
-        # LLM 기반 지식카드 정규화 (Task 1: 설정만 준비)
+        # LLM-based Document Normalization (Task 1: 설정만 준비)
         s.enable_llm_normalization = _env_bool(
             "ENABLE_LLM_NORMALIZATION", s.enable_llm_normalization
         )
+        # 신규 env 명을 우선 읽고, 없으면 legacy env 명으로 fallback.
         s.llm_normalization_model = (
-            _env("LLM_NORMALIZATION_MODEL", s.llm_normalization_model)
+            _env("LLM_DOCUMENT_NORMALIZATION_MODEL")
+            or _env("LLM_NORMALIZATION_MODEL", s.llm_normalization_model)
             or s.llm_normalization_model
         )
         if (raw := _env("NORMALIZATION_OUTPUT_DIR")):
@@ -326,8 +388,14 @@ class Settings:
         s.normalization_max_chars_per_call = _env_int(
             "NORMALIZATION_MAX_CHARS_PER_CALL", s.normalization_max_chars_per_call
         )
+        # 신규: NORMALIZATION_MAX_DOCUMENTS_PER_FILE
+        # legacy: NORMALIZATION_MAX_CARDS_PER_FILE
         s.normalization_max_cards_per_file = _env_int(
-            "NORMALIZATION_MAX_CARDS_PER_FILE", s.normalization_max_cards_per_file
+            "NORMALIZATION_MAX_DOCUMENTS_PER_FILE",
+            _env_int(
+                "NORMALIZATION_MAX_CARDS_PER_FILE",
+                s.normalization_max_cards_per_file,
+            ),
         )
         s.normalization_temperature = _env_float(
             "NORMALIZATION_TEMPERATURE", s.normalization_temperature
@@ -341,19 +409,35 @@ class Settings:
         s.normalization_save_markdown = _env_bool(
             "NORMALIZATION_SAVE_MARKDOWN", s.normalization_save_markdown
         )
+        # 신규: NORMALIZED_DOCUMENT_SOURCE_WEIGHT
+        # legacy: NORMALIZATION_CARD_SOURCE_WEIGHT
         s.normalization_card_source_weight = _env_float(
-            "NORMALIZATION_CARD_SOURCE_WEIGHT", s.normalization_card_source_weight
+            "NORMALIZED_DOCUMENT_SOURCE_WEIGHT",
+            _env_float(
+                "NORMALIZATION_CARD_SOURCE_WEIGHT",
+                s.normalization_card_source_weight,
+            ),
         )
         s.normalization_parent_raw_top_k = _env_int(
             "NORMALIZATION_PARENT_RAW_TOP_K", s.normalization_parent_raw_top_k
         )
 
-        # KnowledgeCard 우선 retrieval (Task 6)
+        # Normalized Document 우선 retrieval (Task 6)
+        # 신규: PRIORITIZE_NORMALIZED_DOCUMENTS / NORMALIZED_DOCUMENT_CONTENT_BOOST
+        # legacy: PRIORITIZE_KNOWLEDGE_CARDS / KNOWLEDGE_CARD_CONTENT_BOOST
         s.prioritize_knowledge_cards = _env_bool(
-            "PRIORITIZE_KNOWLEDGE_CARDS", s.prioritize_knowledge_cards
+            "PRIORITIZE_NORMALIZED_DOCUMENTS",
+            _env_bool(
+                "PRIORITIZE_KNOWLEDGE_CARDS",
+                s.prioritize_knowledge_cards,
+            ),
         )
         s.knowledge_card_content_boost = _env_float(
-            "KNOWLEDGE_CARD_CONTENT_BOOST", s.knowledge_card_content_boost
+            "NORMALIZED_DOCUMENT_CONTENT_BOOST",
+            _env_float(
+                "KNOWLEDGE_CARD_CONTENT_BOOST",
+                s.knowledge_card_content_boost,
+            ),
         )
         s.workflow_card_boost = _env_float("WORKFLOW_CARD_BOOST", s.workflow_card_boost)
         s.checklist_card_boost = _env_float("CHECKLIST_CARD_BOOST", s.checklist_card_boost)
@@ -371,11 +455,20 @@ class Settings:
             "PARENT_RAW_EVIDENCE_TOP_K", s.parent_raw_evidence_top_k
         )
 
-        # KnowledgeCard 중심 답변 (Task 7)
+        # Normalized Document 중심 답변 (Task 7)
+        # 신규: ANSWER_WITH_NORMALIZED_DOCUMENTS / MAX_PRIMARY_NORMALIZED_DOCUMENTS
+        # legacy: ANSWER_WITH_KNOWLEDGE_CARDS / MAX_PRIMARY_CARDS
         s.answer_with_knowledge_cards = _env_bool(
-            "ANSWER_WITH_KNOWLEDGE_CARDS", s.answer_with_knowledge_cards
+            "ANSWER_WITH_NORMALIZED_DOCUMENTS",
+            _env_bool(
+                "ANSWER_WITH_KNOWLEDGE_CARDS",
+                s.answer_with_knowledge_cards,
+            ),
         )
-        s.max_primary_cards = _env_int("MAX_PRIMARY_CARDS", s.max_primary_cards)
+        s.max_primary_cards = _env_int(
+            "MAX_PRIMARY_NORMALIZED_DOCUMENTS",
+            _env_int("MAX_PRIMARY_CARDS", s.max_primary_cards),
+        )
         s.max_raw_evidence_chunks = _env_int(
             "MAX_RAW_EVIDENCE_CHUNKS", s.max_raw_evidence_chunks
         )
@@ -383,7 +476,8 @@ class Settings:
             "INCLUDE_RAW_EVIDENCE_APPENDIX", s.include_raw_evidence_appendix
         )
         s.knowledge_card_answer_template_version = (
-            _env(
+            _env("NORMALIZED_DOCUMENT_ANSWER_TEMPLATE_VERSION")
+            or _env(
                 "KNOWLEDGE_CARD_ANSWER_TEMPLATE_VERSION",
                 s.knowledge_card_answer_template_version,
             )

@@ -1,12 +1,13 @@
 """
 slack_normalizer.py
 ===================
-Slack Thread txt 문서를 LLM 으로 KnowledgeCard 로 정규화하는 normalizer.
+Slack Thread txt 문서를 LLM-based Document Normalization 으로 Normalized
+Document 리스트로 변환하는 normalizer.
 
 Task 3 범위
 -----------
 - Slack Thread 본문(또는 Slack parser v2 가 만든 sanitized_content) 을 받아
-  KnowledgeCard 리스트로 변환한다.
+  Normalized Document 리스트로 변환한다.
 - file_hash + prompt_version + model_name 으로 cache 를 사용한다.
 - LLM 호출은 ``GeminiClient.generate_text(system_instruction=..., temperature=...)``
   에 의존한다. 테스트에서는 동일 시그니처의 fake client 를 주입한다.
@@ -15,12 +16,16 @@ Task 3 범위
 Slack 특화 동작
 ---------------
 - Slack parser v2 가 추출한 ``topic_tags`` / ``todo_phase`` / ``parser_format``
-  을 prompt 에 명시해 카드 분리·토픽 추론에 활용한다.
-- 같은 metadata 를 결과 ``KnowledgeCard.metadata`` 에도 보존해, Task 6~7
+  을 prompt 에 명시해 문서 분리·토픽 추론에 활용한다.
+- 같은 metadata 를 결과 ``NormalizedDocument.metadata`` 에도 보존해, Task 6~7
   의 검색·답변 단계에서 활용할 수 있게 한다.
 
 Guide normalizer 와 공통인 JSON 파싱 / 필드 정규화 / cache 흐름은
 ``guide_normalizer`` 모듈의 helper 를 그대로 재사용한다 (코드 중복 방지).
+
+명칭 변경 노트:
+- 클래스 ``SlackThreadKnowledgeNormalizer`` 는 ``SlackThreadDocumentNormalizer`` 로
+  명칭이 바뀌었다. 기존 import 호환을 위해 legacy alias 를 모듈 하단에서 노출한다.
 """
 from __future__ import annotations
 
@@ -43,13 +48,16 @@ from src.normalization.normalization_prompt import (
     build_slack_normalization_prompt,
 )
 from src.normalization.normalization_store import NormalizationStore
-from src.schemas import KnowledgeCard
+from src.schemas import KnowledgeCard, NormalizedDocument
 
 log = get_logger(__name__)
 
 
-class SlackThreadKnowledgeNormalizer:
-    """Slack Thread 문서를 KnowledgeCard 리스트로 정규화하는 LLM normalizer."""
+class SlackThreadDocumentNormalizer:
+    """Slack Thread 문서를 Normalized Document 리스트로 변환하는 LLM normalizer.
+
+    legacy alias: ``SlackThreadKnowledgeNormalizer`` (모듈 하단에서 노출).
+    """
 
     def __init__(
         self,
@@ -86,10 +94,10 @@ class SlackThreadKnowledgeNormalizer:
         parser_format: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         chunk_index: int = 0,
-    ) -> List[KnowledgeCard]:
-        """Slack Thread 본문을 LLM 으로 정규화해 KnowledgeCard 리스트를 반환한다.
+    ) -> List[NormalizedDocument]:
+        """Slack Thread 본문을 LLM 으로 Normalized Document 리스트로 변환한다.
 
-        cache hit 이면 LLM 호출 없이 저장된 JSON 으로부터 KnowledgeCard 들을 복원한다.
+        cache hit 이면 LLM 호출 없이 저장된 JSON 으로부터 Normalized Document 들을 복원한다.
         cache miss 이면 LLM 을 1회 호출하고, 결과를 JSON / Markdown 으로 저장한 뒤
         cache index 를 업데이트한다.
         """
@@ -230,7 +238,7 @@ class SlackThreadKnowledgeNormalizer:
 
     def _load_from_cache(
         self, cached: Dict[str, Any]
-    ) -> Optional[List[KnowledgeCard]]:
+    ) -> Optional[List[NormalizedDocument]]:
         json_path_str = cached.get("json_path")
         if not json_path_str:
             return None
@@ -259,7 +267,7 @@ class SlackThreadKnowledgeNormalizer:
         input_topic_tags: List[str],
         todo_phase: Optional[str],
         parser_format: Optional[str],
-    ) -> List[KnowledgeCard]:
+    ) -> List[NormalizedDocument]:
         base_metadata: Dict[str, Any] = dict(metadata or {})
         base_metadata.setdefault("prompt_version", self.prompt_version)
         base_metadata.setdefault("model_name", model_name)
@@ -274,7 +282,7 @@ class SlackThreadKnowledgeNormalizer:
         if display_date:
             base_metadata.setdefault("display_date", display_date)
 
-        cards: List[KnowledgeCard] = []
+        cards: List[NormalizedDocument] = []
         for idx, raw in enumerate(raw_cards):
             if not isinstance(raw, dict):
                 continue
@@ -283,7 +291,7 @@ class SlackThreadKnowledgeNormalizer:
             llm_topic_tags = _as_str_list(raw.get("topic_tags"))
             merged_topic_tags = _merge_unique_strings(llm_topic_tags, input_topic_tags)
 
-            card = KnowledgeCard(
+            card = NormalizedDocument(
                 card_id=_make_card_id(file_hash_short, idx, card_type),
                 card_type=card_type,
                 title=_as_str(raw.get("title")).strip() or "(제목 없음)",
@@ -329,3 +337,9 @@ def _merge_unique_strings(primary: List[str], extra: List[str]) -> List[str]:
             seen.add(key)
             out.append(key)
     return out
+
+
+# ---------------------------------------------------------------------------
+# legacy compatibility — 기존 import 유지
+# ---------------------------------------------------------------------------
+SlackThreadKnowledgeNormalizer = SlackThreadDocumentNormalizer

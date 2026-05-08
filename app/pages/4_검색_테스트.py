@@ -113,27 +113,34 @@ with col10:
         unsafe_allow_html=True,
     )
 
-# ---------------------------- 옵션 라인 4 (KnowledgeCard 진단 / 필터) ---------
+# ---------------------------- 옵션 라인 4 (Normalized Document 진단 / 필터) ---
 col_kc1, col_kc2, col_kc3 = st.columns([1, 1, 1])
 with col_kc1:
     content_type_filter = st.selectbox(
         "content_type 필터",
-        ["전체", "knowledge_card", "conversation", "text", "raw_table"],
+        ["전체", "normalized_document", "knowledge_card", "conversation", "text", "raw_table"],
         index=0,
-        help="검색 결과를 content_type 으로 필터링한다 (UI 상에서만 적용).",
+        help=(
+            "검색 결과를 content_type 으로 필터링한다 (UI 상에서만 적용). "
+            "신규 표준은 'normalized_document', 기존 색인 데이터는 'knowledge_card' 로 "
+            "저장되어 있을 수 있다."
+        ),
     )
 with col_kc2:
     card_type_filter = st.selectbox(
-        "card_type 필터",
+        "normalized_document_type 필터",
         ["전체", "workflow", "checklist", "issue", "faq", "decision",
          "glossary", "communication_template"],
         index=0,
-        help="검색 결과를 KnowledgeCard 의 card_type 으로 필터링한다 (UI 상에서만 적용).",
+        help=(
+            "검색 결과를 Normalized Document 의 type 으로 필터링한다 "
+            "(UI 상에서만 적용). 기존 metadata 의 card_type 도 동일하게 인식된다."
+        ),
     )
 with col_kc3:
     st.markdown(
-        f"**PRIORITIZE_KNOWLEDGE_CARDS**: `{settings.prioritize_knowledge_cards}`<br>"
-        f"**KC_CONTENT_BOOST**: `{settings.knowledge_card_content_boost}` · "
+        f"**PRIORITIZE_NORMALIZED_DOCUMENTS**: `{settings.prioritize_knowledge_cards}`<br>"
+        f"**ND_CONTENT_BOOST**: `{settings.knowledge_card_content_boost}` · "
         f"**RAW_EVIDENCE_BOOST**: `{settings.raw_evidence_boost}`<br>"
         f"**ENABLE_PARENT_RAW_EVIDENCE**: `{settings.enable_parent_raw_evidence}`",
         unsafe_allow_html=True,
@@ -210,7 +217,11 @@ if st.button("검색 실행", type="primary", disabled=not query.strip()):
                 if (c.content_type or "").lower() != content_type_filter:
                     continue
             if card_type_filter != "전체":
-                if str(md.get("card_type") or "").lower() != card_type_filter:
+                # 신규 / legacy metadata 키를 모두 인식
+                resolved_type = str(
+                    md.get("normalized_document_type") or md.get("card_type") or ""
+                ).lower()
+                if resolved_type != card_type_filter:
                     continue
             out.append(c)
         return out
@@ -228,17 +239,18 @@ if st.button("검색 실행", type="primary", disabled=not query.strip()):
     m3.metric("탈락 (dropped)", summary.get("dropped_count", 0))
     m4.metric("top_k", summary.get("top_k", k))
 
-    # KnowledgeCard 우선 retrieval 진단 메트릭 (Task 6)
+    # Normalized Document 우선 retrieval 진단 메트릭 (Task 6)
+    nd_count = summary.get("normalized_document_count", summary.get("knowledge_card_count", 0))
     m5, m6, m7, m8 = st.columns(4)
-    m5.metric("knowledge_card", summary.get("knowledge_card_count", 0))
+    m5.metric("normalized_document", nd_count)
     m6.metric("raw_evidence", summary.get("raw_evidence_count", 0))
     m7.metric("raw_fallback", summary.get("raw_fallback_count", 0))
     m8.metric(
-        "KC_CONTENT_BOOST",
-        f"{float(summary.get('knowledge_card_content_boost', 1.0)):.2f}",
+        "ND_CONTENT_BOOST",
+        f"{float(summary.get('normalized_document_content_boost', summary.get('knowledge_card_content_boost', 1.0))):.2f}",
     )
     st.caption(
-        f"prioritize_knowledge_cards={summary.get('prioritize_knowledge_cards')} · "
+        f"prioritize_normalized_documents={summary.get('prioritize_normalized_documents', summary.get('prioritize_knowledge_cards'))} · "
         f"raw_evidence_boost={summary.get('raw_evidence_boost')} · "
         f"enable_parent_raw_evidence={summary.get('enable_parent_raw_evidence')} · "
         f"parent_raw_evidence_top_k={summary.get('parent_raw_evidence_top_k')}"
@@ -294,16 +306,30 @@ if st.button("검색 실행", type="primary", disabled=not query.strip()):
                 parent_ids_str = ",".join(str(x) for x in parent_ids[:3])
             else:
                 parent_ids_str = str(parent_ids)
+            nd_id = md.get("normalized_document_id") or md.get("card_id") or "-"
+            nd_type = md.get("normalized_document_type") or md.get("card_type") or "-"
+            nd_match = bool(
+                md.get("normalized_document_type_match")
+                or md.get("card_type_match", False)
+            )
+            nd_boost = float(
+                md.get("normalized_document_boost")
+                or md.get("knowledge_card_boost") or 1.0
+            )
+            nd_type_boost = float(
+                md.get("normalized_document_type_boost")
+                or md.get("card_type_boost") or 1.0
+            )
             rows.append({
                 "rank": i,
                 "retrieval_role": md.get("retrieval_role") or "-",
                 "content_type": c.content_type,
                 "source_type": c.source_type,
-                "card_id": md.get("card_id") or "-",
-                "card_type": md.get("card_type") or "-",
-                "card_type_match": bool(md.get("card_type_match", False)),
-                "kc_boost": round(float(md.get("knowledge_card_boost") or 1.0), 4),
-                "card_type_boost": round(float(md.get("card_type_boost") or 1.0), 4),
+                "normalized_document_id": nd_id,
+                "normalized_document_type": nd_type,
+                "type_match": nd_match,
+                "nd_boost": round(nd_boost, 4),
+                "nd_type_boost": round(nd_type_boost, 4),
                 "score": round(c.score, 4),
                 "final_score": round(c.final_score, 4),
                 "source_weight": round(float(md.get("source_weight") or 0.0), 4),
@@ -333,7 +359,7 @@ if st.button("검색 실행", type="primary", disabled=not query.strip()):
             role = md.get("retrieval_role") or "-"
             role_badge = ""
             if role == "primary_card":
-                role_badge = " · :violet[PRIMARY CARD]"
+                role_badge = " · :violet[PRIMARY NORMALIZED DOC]"
             elif role == "raw_evidence":
                 role_badge = " · :blue[RAW EVIDENCE]"
             title = (
@@ -341,15 +367,23 @@ if st.button("검색 실행", type="primary", disabled=not query.strip()):
                 f"(score={c.score:.4f}, final={c.final_score:.4f})"
                 f"{role_badge}"
             )
+            nd_id = md.get("normalized_document_id") or md.get("card_id") or "-"
+            nd_type = md.get("normalized_document_type") or md.get("card_type") or "-"
+            nd_match = bool(
+                md.get("normalized_document_type_match")
+                or md.get("card_type_match", False)
+            )
+            nd_boost = md.get("normalized_document_boost") or md.get("knowledge_card_boost")
+            nd_type_boost = md.get("normalized_document_type_boost") or md.get("card_type_boost")
             with st.expander(title, expanded=(i == 1)):
                 st.markdown(
                     f"- **retrieval_role**: `{role}`\n"
                     f"- **content_type**: `{c.content_type}` · **source_type**: `{c.source_type}`\n"
-                    f"- **card_id**: `{md.get('card_id') or '-'}` · "
-                    f"**card_type**: `{md.get('card_type') or '-'}` · "
-                    f"**card_type_match**: `{bool(md.get('card_type_match', False))}`\n"
-                    f"- **knowledge_card_boost**: `{md.get('knowledge_card_boost')}` · "
-                    f"**card_type_boost**: `{md.get('card_type_boost')}`\n"
+                    f"- **normalized_document_id**: `{nd_id}` · "
+                    f"**normalized_document_type**: `{nd_type}` · "
+                    f"**type_match**: `{nd_match}`\n"
+                    f"- **normalized_document_boost**: `{nd_boost}` · "
+                    f"**normalized_document_type_boost**: `{nd_type_boost}`\n"
                     f"- **parent_raw_chunk_ids**: `{md.get('parent_raw_chunk_ids') or []}`\n"
                     f"- **file_name**: `{c.file_name}`\n"
                     f"- **uploaded_category**: `{c.uploaded_category}`\n"

@@ -1,12 +1,19 @@
 """
 normalization_prompt.py
 =======================
-LLM 기반 KnowledgeCard 정규화 prompt 모듈.
+LLM-based Document Normalization 의 prompt 모듈.
 
 지원 prompt
 -----------
 - Guide 문서: ``GUIDE_NORMALIZER_PROMPT_VERSION`` / ``build_guide_normalization_prompt``
 - Slack Thread: ``SLACK_NORMALIZER_PROMPT_VERSION`` / ``build_slack_normalization_prompt``
+
+명칭 변경 노트:
+- 본 모듈의 prompt 본문은 LLM JSON 응답 schema 와 prompt_version cache key 호환을
+  위해 legacy 표현(``KnowledgeCard``, ``cards``) 을 의도적으로 유지한다.
+  prompt 본문이 의미 있게 바뀌어 LLM 출력 형태가 달라지지 않는 한
+  ``GUIDE_NORMALIZER_PROMPT_VERSION`` / ``SLACK_NORMALIZER_PROMPT_VERSION`` 을
+  올리지 않는다 (cache invalidation 회피).
 
 설계 의도
 ---------
