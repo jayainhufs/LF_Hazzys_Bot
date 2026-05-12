@@ -2,8 +2,9 @@
 
 > 사내 업무 문서를 로컬에서 색인하고 한국어로 질의응답하는 **로컬 RAG (Retrieval Augmented
 > Generation) 챗봇** 프로토타입. 외부 Vector DB 나 SaaS 를 사용하지 않고, 모든 원본 자료와
-> 색인 결과는 로컬 디스크에 저장된다. 외부 호출은 답변/요약/임베딩 시점의 **Google Gemini
-> API** 한 곳에서만 일어난다.
+> 색인 결과는 로컬 디스크에 저장된다. 기본 RAG 기능의 외부 호출은 답변/요약/임베딩 시점의
+> **Google Gemini API** 중심으로 제한된다. 단, 선택 기능인 Slack QA Bot 을 활성화하면 Slack
+> 메시지 수신/답변을 위해 **Slack API (Socket Mode)** 를 추가로 사용한다.
 
 이 저장소는 **공개용 코드/설정/예시** 만 포함한다. 회사 / 광고주 / 매체사 / 사람 이름 같은
 실제 업무 데이터는 어떤 형태로도 저장소에 포함되지 않는다 (자세한 내용은 [Security & Privacy
@@ -27,6 +28,7 @@ Notes](#security--privacy-notes) 참고).
 12. [Security & Privacy Notes](#security--privacy-notes)
 13. [현재 미지원 기능](#12-현재-미지원-기능)
 14. [향후 확장 계획](#13-향후-확장-계획)
+15. [Slack QA Bot (선택 기능)](#14-slack-qa-bot-선택-기능)
 
 ---
 
@@ -50,8 +52,11 @@ Notes](#security--privacy-notes) 참고).
     chroma_db`) 에 저장한다.
   - **자체 LLM 추론 미사용**: Ollama / llama.cpp 등을 사용하지 않는다. 답변과 (옵션) 임베딩만
     Google Gemini API 로 호출한다.
-  - **외부 메신저 API 미사용**: Slack Bot, Slack API, 카카오톡 API 등에 직접 접근하지 않는다.
-    필요한 대화는 사용자가 직접 텍스트 파일로 내보내 업로드한다.
+  - **문서 수집/색인 단계의 외부 메신저 API 미사용**: Slack / 카카오톡 대화 자료는 사용자가
+    직접 텍스트 파일로 내보내 업로드하는 방식을 기본으로 한다. 단, Slack QA Bot 선택 기능을
+    활성화하면 Slack 에서 봇 멘션을 수신하고 thread 에 답변을 반환하기 위해 Slack API
+    (Socket Mode) 를 사용한다. 현재 MVP 에서는 Slack Thread 자동 수집, 채널 history 조회,
+    파일/이미지 다운로드, 자동 색인은 수행하지 않는다.
   - **모든 원본은 로컬 디스크**에만 보관된다. `data/raw`, `data/processed`, `storage/` 는
     저장소에 커밋하지 않는다.
 - 임베딩 / 답변 / 검색은 모두 한국어 업무 맥락을 가정한다. UI 와 로그도 한국어 우선이다.
@@ -134,8 +139,9 @@ app/
 | **Excel 표** | 표 형식 가이드 / 정산 시트 / 정의서 | xlsx / xlsm |
 | **기타** | 분류 외 자료 (실험적) | * |
 
-> 외부 메신저 API 를 호출하지 않는다. 메신저 자료는 사용자가 직접 텍스트로 내보내 업로드해야
-> 한다.
+> 문서 수집/색인 목적의 메신저 자료는 사용자가 직접 텍스트로 내보내 업로드하는 방식을
+> 기본으로 한다. Slack QA Bot 은 별도 선택 기능이며, Slack 에서 질문을 받아 기존 QA Pipeline
+> 을 호출하는 사용자 질문 인터페이스 역할만 수행한다.
 
 PDF / 이미지 OCR / Hybrid Retrieval / 자동 폴더 watcher 등은 현재 MVP 에서 지원하지 않는다.
 ([미지원 기능](#12-현재-미지원-기능) 참고)
@@ -416,6 +422,7 @@ python -m pytest tests/test_normalized_document_retrieval.py -v
 python -m pytest tests/test_normalized_document_qa.py        -v
 python -m pytest tests/test_legacy_compatibility.py          -v
 python -m pytest tests/test_retrieval_precision.py           -v
+python -m pytest tests/test_slack_bot.py                     -v
 ```
 
 > 모든 테스트는 외부 Gemini API 호출 없이 동작하도록 fake client / fake generator 로 작성되어
@@ -520,6 +527,141 @@ python -m pytest tests/test_retrieval_precision.py           -v
 - 사용자 피드백 기반 evaluation
 - LLM-based Document Normalization 확장 (현재 Guide / Slack 스레드 → 향후 카카오 / 메일 /
   Excel 영역으로 확대)
+
+---
+
+## 14. Slack QA Bot (선택 기능)
+
+Streamlit UI 외에 **Slack 채널에서 봇을 멘션해 질문을 던질 수 있는 사용자 인터페이스**
+를 선택적으로 제공한다. Slack Bot 은 Streamlit 을 **대체하지 않으며**, 두 인터페이스의
+역할은 명확히 분리된다.
+
+| 인터페이스 | 역할 |
+| --- | --- |
+| **Streamlit UI** | 관리자 / 운영 콘솔 — 문서 업로드, 색인, 정규화 문서 관리, 검색 테스트, API 상태 확인 |
+| **Slack Bot**    | 사용자 질문 인터페이스 — 채널에서 봇 멘션 → 기존 QA Pipeline 호출 → thread 답변 |
+
+```
+        Streamlit UI ─┐
+                      ├→ 공통 src/rag/qa_pipeline.py → Retriever/Reranker → Local ChromaDB → Gemini → Answer
+        Slack Bot   ──┘
+```
+
+Slack Bot 은 자체 RAG 검색/답변 로직을 가지지 않고, 항상 기존 ``QAPipeline`` 을 그대로
+호출하는 얇은 adapter (``src/slack_bot/qa_adapter.py``) 로 동작한다. 따라서
+ingestion / normalization / retrieval / reranking / qa 흐름은 Streamlit 과 100%
+동일하다.
+
+### 14.1 동작 흐름
+
+1. Slack ``app_mention`` 이벤트 수신
+2. 봇 mention (``<@U...>``) 제거
+3. 질문 텍스트 정제 (양 끝 공백 / 콜론 정리, 길이 제한)
+4. ``SLACK_ALLOWED_CHANNEL_IDS`` / ``SLACK_ALLOWED_USER_IDS`` 가 설정되어 있으면 검사
+5. ``qa_adapter.answer_slack_question`` → 기존 ``QAPipeline.ask`` 호출
+6. 답변 / 참고 근거 (Normalized Document, Raw Evidence) / 진단 정보를 Slack 메시지로 포맷
+7. 원본 메시지 thread 에 답변 post (``SLACK_REPLY_IN_THREAD=true`` 기본값)
+
+### 14.2 필요한 Slack App 설정
+
+1. <https://api.slack.com/apps> 에서 새 앱 생성 (From scratch).
+2. **Socket Mode** 활성화 (Settings → Socket Mode → On).
+   - 별도의 public HTTP endpoint 가 필요 없으며, 사내 PC / 로컬 환경에서 그대로 테스트
+     가능하다.
+3. **App-Level Token** 생성 (Settings → Basic Information → App-Level Tokens).
+   - Scope: ``connections:write``
+   - 발급된 ``xapp-...`` 을 ``.env`` 의 ``SLACK_APP_TOKEN`` 에 입력.
+4. **Bot Token Scopes** 부여 (Features → OAuth & Permissions → Scopes → Bot Token Scopes).
+   - ``app_mentions:read``
+   - ``chat:write``
+5. **Event Subscriptions** 활성화 후 Bot Events 에 ``app_mention`` 추가.
+6. Workspace 에 앱 설치 → 발급된 ``xoxb-...`` Bot User OAuth Token 을 ``.env`` 의
+   ``SLACK_BOT_TOKEN`` 에 입력.
+7. 봇을 사용할 채널에 봇을 초대 (``/invite @<봇이름>``).
+
+### 14.3 환경변수 (.env.example 참고)
+
+| 환경변수 | 용도 | 기본값 |
+| --- | --- | --- |
+| ``SLACK_BOT_ENABLED`` | 봇 활성화 여부 | ``false`` |
+| ``SLACK_BOT_MODE`` | 동작 모드 (현재 ``socket`` 만 지원) | ``socket`` |
+| ``SLACK_BOT_TOKEN`` | Bot User OAuth Token (``xoxb-...``) | (비어 있음) |
+| ``SLACK_APP_TOKEN`` | App-Level Token (``xapp-...``, ``connections:write``) | (비어 있음) |
+| ``SLACK_ALLOWED_CHANNEL_IDS`` | 응답 허용 채널 ID 콤마 구분 (비우면 전체 허용) | (비어 있음) |
+| ``SLACK_ALLOWED_USER_IDS`` | 응답 허용 사용자 ID 콤마 구분 (비우면 전체 허용) | (비어 있음) |
+| ``SLACK_REPLY_IN_THREAD`` | 항상 thread 로 답변할지 여부 | ``true`` |
+| ``SLACK_MAX_QUESTION_CHARS`` | 한 번에 처리할 질문의 최대 글자수 (초과 시 잘라냄) | ``1000`` |
+
+> **주의** — Slack token 은 절대 코드에 하드코딩하지 말고 ``.env`` (커밋 금지) 에서만
+> 관리한다. ``.env`` 는 ``.gitignore`` 로 차단되어 있다.
+
+### 14.4 실행 방법
+
+```bash
+# (.venv 활성화 상태에서)
+pip install -r requirements.txt          # slack-bolt 가 함께 설치됨
+
+# .env 에 SLACK_BOT_ENABLED=true 와 두 토큰을 채운 뒤
+python scripts/run_slack_bot.py
+```
+
+- ``SLACK_BOT_ENABLED=false`` 면 안내 메시지를 출력하고 즉시 종료한다.
+- 토큰이 누락된 경우 한국어 안내와 함께 exit code ``2`` 로 종료한다.
+- Socket Mode 로 Slack 에 접속하므로 별도의 reverse proxy / ngrok / 외부 endpoint 가
+  필요 없다.
+- 종료는 Ctrl+C.
+
+### 14.5 사용 예
+
+```
+사용자: @LF_HAZZYS_BOT 세팅 전에 확인해야 할 것 알려줘
+
+봇 (thread):
+*답변*
+…
+
+*참고 근거*
+• Normalized Document
+   - guide_setup.md · 사전 점검 (workflow)
+     › 사전 점검 항목 1: …
+• Raw Evidence
+   - slack_thread_001.txt · 운영 공지
+     › 운영팀: 세팅 전 …
+
+*진단*
+• answer_mode: `knowledge_card`
+• primary_normalized_document_count: 1
+• raw_evidence_count: 1
+• raw_fallback_count: 0
+• model: `gemini-2.5-flash-lite`
+```
+
+raw 원문은 그대로 노출되지 않는다. 모든 chunk preview 는 anonymizer / sanitizer 정책
+(``ANONYMIZE_OUTPUT`` 등) 을 통과한 결과만 사용한다.
+
+### 14.6 운영 주의사항
+
+- **동일 token 으로 여러 PC 에서 동시에 봇 프로세스를 실행하지 않는다.** Slack 측에서
+  중복 Socket Mode 연결로 처리되어 메시지 누락이 발생할 수 있다.
+- **허용 채널 / 유저 화이트리스트** 를 설정해 운영 채널과 테스트 채널을 분리하는 것을
+  권장한다.
+- 봇은 항상 thread 로 답변하므로 채널 본문이 어지러워지지 않는다 (``SLACK_REPLY_IN_THREAD=
+  true`` 기본).
+- 내부 오류 시 traceback 을 Slack 에 노출하지 않고 한국어 안내만 보낸다 — 실제 traceback
+  은 봇 프로세스의 로그에서만 확인 가능.
+- ``data/raw``, ``data/processed``, ``storage`` 는 Slack Bot 이 직접 수정하지 않는다 —
+  색인 / 정규화 / 캐시는 모두 Streamlit / CLI 흐름을 통해서만 갱신한다.
+
+### 14.7 이번 MVP 에서 제외된 범위
+
+다음은 의도적으로 제외했다 (필요 시 별도 작업으로 확장).
+
+- Slack Thread 자동 수집 (스레드 전체를 봇이 직접 읽어 색인하지 않음)
+- Slack 채널 history 조회
+- Slack 파일 / 이미지 다운로드
+- 자동 색인 (질문 들어올 때 봇이 새 문서를 ingest 하지 않음)
+- DM 처리 (현재는 ``app_mention`` 이벤트만 처리)
+- HTTP / Events API 모드 (현재는 Socket Mode 만 지원)
 
 ---
 

@@ -1,0 +1,495 @@
+"""
+test_slack_bot.py
+=================
+Slack QA Bot MVP 단위 테스트.
+
+외부 Slack API / Bolt App / 실제 Gemini API 는 호출하지 않는다.
+
+검증 항목:
+- mention 제거 (``strip_bot_mentions``)
+- 빈 질문 → 사용법 안내
+- allowed channel/user 체크
+- formatter 가 answer/sources/diagnostics 를 Slack 메시지로 변환
+- handler 가 qa_pipeline adapter 를 호출하고 thread 에 응답
+- token 누락 시 graceful 실패 (``SlackBotSettings.validate``)
+- ``run_slack_bot.py`` 가 SLACK_BOT_ENABLED=false 에서 graceful 종료
+"""
+from __future__ import annotations
+
+import importlib
+from pathlib import Path
+from typing import Any, Dict, List
+
+import pytest
+
+# tests/conftest.py 가 sys.path 에 ROOT 를 넣어준다.
+from src.slack_bot import formatter, handlers
+from src.slack_bot.config import SlackBotSettings
+
+
+# ---------------------------------------------------------------------------
+# 공통 helper
+# ---------------------------------------------------------------------------
+class _FakePost:
+    """``say`` 또는 ``client.chat_postMessage`` 호환 fake."""
+
+    def __init__(self) -> None:
+        self.calls: List[Dict[str, Any]] = []
+
+    def __call__(self, **kwargs: Any) -> None:
+        self.calls.append(kwargs)
+
+
+def _make_settings(**overrides: Any) -> SlackBotSettings:
+    base = SlackBotSettings(
+        enabled=True,
+        mode="socket",
+        bot_token="xoxb-test-token",
+        app_token="xapp-test-token",
+        allowed_channel_ids=set(),
+        allowed_user_ids=set(),
+        reply_in_thread=True,
+        max_question_chars=1000,
+    )
+    for k, v in overrides.items():
+        setattr(base, k, v)
+    return base
+
+
+def _ok_qa_result() -> Dict[str, Any]:
+    """qa_adapter.answer_slack_question 가 반환할 표준 형태의 fake 결과."""
+    return {
+        "answer": "세팅 전에는 가이드 A, 가이드 B 를 확인하세요.",
+        "sources": {
+            "primary_normalized_documents": [
+                {
+                    "label": "guide_setup.md · 사전 점검 (workflow)",
+                    "preview": "사전 점검 항목 1: ...",
+                },
+            ],
+            "raw_evidence": [
+                {
+                    "label": "slack_thread_001.txt · 운영 공지",
+                    "preview": "운영팀: 세팅 전 ...",
+                },
+            ],
+            "raw_fallback": [],
+        },
+        "diagnostics": {
+            "answer_mode": "knowledge_card",
+            "primary_normalized_document_count": 1,
+            "raw_evidence_count": 1,
+            "raw_fallback_count": 0,
+            "generation_skipped": False,
+            "skip_reason": None,
+            "model_name": "gemini-2.5-flash-lite",
+            "embedding_provider": "gemini",
+            "embedding_model": "gemini-embedding-001",
+            "rewritten_query": None,
+            "answer_format_label": "default",
+        },
+        "answer_mode": "knowledge_card",
+        "primary_normalized_document_count": 1,
+        "raw_evidence_count": 1,
+        "raw_fallback_count": 0,
+    }
+
+
+# ---------------------------------------------------------------------------
+# strip_bot_mentions
+# ---------------------------------------------------------------------------
+class TestStripBotMentions:
+    def test_removes_simple_mention(self) -> None:
+        assert handlers.strip_bot_mentions("<@U12345> 안녕") == "안녕"
+
+    def test_removes_named_mention(self) -> None:
+        assert (
+            handlers.strip_bot_mentions("<@U12345|hazzys-bot>: 질문이요")
+            == "질문이요"
+        )
+
+    def test_removes_multiple_mentions(self) -> None:
+        out = handlers.strip_bot_mentions(
+            "<@U111> <@U222> 세팅 전에 확인해야 할 것 알려줘"
+        )
+        assert out == "세팅 전에 확인해야 할 것 알려줘"
+
+    def test_handles_none_and_empty(self) -> None:
+        assert handlers.strip_bot_mentions(None) == ""
+        assert handlers.strip_bot_mentions("") == ""
+        assert handlers.strip_bot_mentions("   ") == ""
+
+    def test_strips_informal_prefix(self) -> None:
+        assert handlers.strip_bot_mentions("<@U1> 봇아 이거 알려줘") == "이거 알려줘"
+
+    def test_keeps_inline_mentions_clean_but_does_not_lose_content(self) -> None:
+        out = handlers.strip_bot_mentions("질문 <@U1> 본문")
+        # mention 은 사라지고 양쪽 텍스트는 유지된다.
+        assert "<@U1>" not in out
+        assert "질문" in out and "본문" in out
+
+
+# ---------------------------------------------------------------------------
+# 빈 질문 / 너무 긴 질문 / allowed channel / allowed user
+# ---------------------------------------------------------------------------
+class TestHandlerGuards:
+    def test_empty_question_returns_help(self) -> None:
+        post = _FakePost()
+        cfg = _make_settings()
+        out = handlers.handle_app_mention(
+            event={"text": "<@U1>", "channel": "C1", "user": "U2", "ts": "1.0"},
+            post=post,
+            settings=cfg,
+            answer_fn=lambda **kw: pytest.fail("answer_fn 이 호출되면 안 된다"),
+        )
+        assert out["responded"] is True
+        assert out["reason"] == "empty_question"
+        assert len(post.calls) == 1
+        assert "사용법" in post.calls[0]["text"]
+        # thread 로 응답해야 한다 (reply_in_thread=True 기본값)
+        assert post.calls[0]["thread_ts"] == "1.0"
+
+    def test_disallowed_channel_is_silent(self) -> None:
+        post = _FakePost()
+        cfg = _make_settings(allowed_channel_ids={"C-allow-only"})
+        out = handlers.handle_app_mention(
+            event={
+                "text": "<@U1> 질문",
+                "channel": "C-other",
+                "user": "U2",
+                "ts": "1.0",
+            },
+            post=post,
+            settings=cfg,
+            answer_fn=lambda **kw: pytest.fail("answer_fn 이 호출되면 안 된다"),
+        )
+        assert out == {"responded": False, "reason": "channel_not_allowed"}
+        assert post.calls == []
+
+    def test_allowed_channel_is_passed(self) -> None:
+        post = _FakePost()
+        cfg = _make_settings(allowed_channel_ids={"C-ok"})
+        called = {}
+
+        def _answer(**kw: Any) -> Dict[str, Any]:
+            called.update(kw)
+            return _ok_qa_result()
+
+        out = handlers.handle_app_mention(
+            event={
+                "text": "<@U1> 세팅 전에 확인",
+                "channel": "C-ok",
+                "user": "U2",
+                "ts": "1.0",
+            },
+            post=post,
+            settings=cfg,
+            answer_fn=_answer,
+        )
+        assert out["responded"] is True
+        assert out["reason"] == "ok"
+        assert called["channel_id"] == "C-ok"
+        assert "세팅" in called["question"]
+
+    def test_disallowed_user_is_silent(self) -> None:
+        post = _FakePost()
+        cfg = _make_settings(allowed_user_ids={"U-only"})
+        out = handlers.handle_app_mention(
+            event={
+                "text": "<@U1> 질문",
+                "channel": "C1",
+                "user": "U-other",
+                "ts": "1.0",
+            },
+            post=post,
+            settings=cfg,
+            answer_fn=lambda **kw: pytest.fail("answer_fn 이 호출되면 안 된다"),
+        )
+        assert out == {"responded": False, "reason": "user_not_allowed"}
+        assert post.calls == []
+
+    def test_question_truncation_includes_notice(self) -> None:
+        post = _FakePost()
+        cfg = _make_settings(max_question_chars=10)
+        captured: Dict[str, Any] = {}
+
+        def _answer(**kw: Any) -> Dict[str, Any]:
+            captured.update(kw)
+            return _ok_qa_result()
+
+        long_q = "가" * 50
+        handlers.handle_app_mention(
+            event={
+                "text": f"<@U1> {long_q}",
+                "channel": "C1",
+                "user": "U2",
+                "ts": "1.0",
+            },
+            post=post,
+            settings=cfg,
+            answer_fn=_answer,
+        )
+        assert len(captured["question"]) == 10
+        # 안내 문구가 응답 메시지 앞에 붙어야 한다.
+        assert any("질문이 너무 깁니다" in c["text"] for c in post.calls)
+
+
+# ---------------------------------------------------------------------------
+# formatter
+# ---------------------------------------------------------------------------
+class TestFormatter:
+    def test_format_qa_result_contains_all_sections(self) -> None:
+        text = formatter.format_qa_result(_ok_qa_result())
+        assert "*답변*" in text
+        assert "세팅 전에는 가이드" in text
+        assert "*참고 근거*" in text
+        assert "Normalized Document" in text
+        assert "Raw Evidence" in text
+        assert "*진단*" in text
+        assert "answer_mode" in text
+        assert "primary_normalized_document_count: 1" in text
+        assert "raw_evidence_count: 1" in text
+        assert "raw_fallback_count: 0" in text
+
+    def test_format_qa_result_handles_empty_answer(self) -> None:
+        result = _ok_qa_result()
+        result["answer"] = ""
+        text = formatter.format_qa_result(result)
+        assert "(답변이 비어 있습니다.)" in text
+
+    def test_format_qa_result_truncates_long_text(self) -> None:
+        result = _ok_qa_result()
+        result["answer"] = "가" * 100_000
+        text = formatter.format_qa_result(result)
+        assert len(text) <= formatter.SLACK_MESSAGE_HARD_LIMIT
+        assert text.endswith("…(메시지 길이 제한으로 일부 잘라냄)") or "…" in text
+
+    def test_help_message_mentions_usage(self) -> None:
+        msg = formatter.format_help_message()
+        assert "사용법" in msg
+
+    def test_internal_error_message_does_not_leak_traceback(self) -> None:
+        msg = formatter.format_internal_error_message()
+        assert "Traceback" not in msg
+        assert "내부 오류" in msg
+
+
+# ---------------------------------------------------------------------------
+# handler 가 adapter 호출 → formatter → post 흐름 통합
+# ---------------------------------------------------------------------------
+class TestHandlerEndToEndWithMockAdapter:
+    def test_handler_calls_adapter_and_posts_to_thread(self) -> None:
+        post = _FakePost()
+        cfg = _make_settings()
+        captured: Dict[str, Any] = {}
+
+        def _fake_answer(**kwargs: Any) -> Dict[str, Any]:
+            captured.update(kwargs)
+            return _ok_qa_result()
+
+        out = handlers.handle_app_mention(
+            event={
+                "text": "<@U999> 세팅 전에 확인해야 할 것 알려줘",
+                "channel": "C-public",
+                "user": "U-asker",
+                "ts": "1700000000.000100",
+            },
+            post=post,
+            settings=cfg,
+            answer_fn=_fake_answer,
+        )
+        # adapter 호출 확인
+        assert captured["question"] == "세팅 전에 확인해야 할 것 알려줘"
+        assert captured["user_id"] == "U-asker"
+        assert captured["channel_id"] == "C-public"
+        # post 호출 확인
+        assert len(post.calls) == 1
+        kw = post.calls[0]
+        assert kw["channel"] == "C-public"
+        assert kw["thread_ts"] == "1700000000.000100"
+        assert "*답변*" in kw["text"]
+        assert "세팅 전에는 가이드" in kw["text"]
+        # 진단 dict 반환
+        assert out["responded"] is True
+        assert out["answer_mode"] == "knowledge_card"
+        assert out["primary_normalized_document_count"] == 1
+
+    def test_handler_uses_thread_ts_when_present(self) -> None:
+        post = _FakePost()
+        cfg = _make_settings()
+        handlers.handle_app_mention(
+            event={
+                "text": "<@U1> 질문",
+                "channel": "C1",
+                "user": "U1",
+                "ts": "111.111",
+                "thread_ts": "100.100",
+            },
+            post=post,
+            settings=cfg,
+            answer_fn=lambda **kw: _ok_qa_result(),
+        )
+        assert post.calls[0]["thread_ts"] == "100.100"
+
+    def test_handler_returns_friendly_error_on_adapter_exception(self) -> None:
+        post = _FakePost()
+        cfg = _make_settings()
+
+        def _boom(**kw: Any) -> Dict[str, Any]:
+            raise RuntimeError("internal failure with secret context")
+
+        out = handlers.handle_app_mention(
+            event={
+                "text": "<@U1> 질문",
+                "channel": "C1",
+                "user": "U1",
+                "ts": "1.0",
+            },
+            post=post,
+            settings=cfg,
+            answer_fn=_boom,
+        )
+        assert out["responded"] is True
+        assert out["reason"] == "qa_error"
+        assert len(post.calls) == 1
+        assert "내부 오류" in post.calls[0]["text"]
+        # traceback / 내부 메시지가 새어나가지 않는다.
+        assert "secret context" not in post.calls[0]["text"]
+        assert "Traceback" not in post.calls[0]["text"]
+
+
+# ---------------------------------------------------------------------------
+# token 누락 시 graceful failure
+# ---------------------------------------------------------------------------
+class TestConfigValidation:
+    def test_missing_bot_token_reports_problem(self) -> None:
+        cfg = SlackBotSettings(
+            enabled=True, mode="socket",
+            bot_token=None, app_token="xapp-real",
+        )
+        ok, problems = cfg.validate()
+        assert ok is False
+        assert any("SLACK_BOT_TOKEN" in p for p in problems)
+
+    def test_placeholder_bot_token_is_treated_as_missing(self) -> None:
+        cfg = SlackBotSettings(
+            enabled=True, mode="socket",
+            bot_token="xoxb-your-bot-token",
+            app_token="xapp-your-app-token",
+        )
+        ok, problems = cfg.validate()
+        assert ok is False
+        assert any("SLACK_BOT_TOKEN" in p for p in problems)
+        assert any("SLACK_APP_TOKEN" in p for p in problems)
+
+    def test_disabled_bot_reports_problem(self) -> None:
+        cfg = SlackBotSettings(
+            enabled=False, mode="socket",
+            bot_token="xoxb-real", app_token="xapp-real",
+        )
+        ok, problems = cfg.validate()
+        assert ok is False
+        assert any("SLACK_BOT_ENABLED" in p for p in problems)
+
+    def test_unsupported_mode_reports_problem(self) -> None:
+        cfg = SlackBotSettings(
+            enabled=True, mode="http",
+            bot_token="xoxb-real", app_token="xapp-real",
+        )
+        ok, problems = cfg.validate()
+        assert ok is False
+        assert any("SLACK_BOT_MODE" in p for p in problems)
+
+    def test_valid_config_passes(self) -> None:
+        cfg = SlackBotSettings(
+            enabled=True, mode="socket",
+            bot_token="xoxb-real-1234", app_token="xapp-real-1234",
+        )
+        ok, problems = cfg.validate()
+        assert ok is True
+        assert problems == []
+
+    def test_load_settings_reads_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from src.slack_bot import config as cfg_mod
+
+        monkeypatch.setenv("SLACK_BOT_ENABLED", "true")
+        monkeypatch.setenv("SLACK_BOT_MODE", "socket")
+        monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-real-token")
+        monkeypatch.setenv("SLACK_APP_TOKEN", "xapp-real-token")
+        monkeypatch.setenv("SLACK_ALLOWED_CHANNEL_IDS", "C1, C2 ;C3")
+        monkeypatch.setenv("SLACK_ALLOWED_USER_IDS", "")
+        monkeypatch.setenv("SLACK_REPLY_IN_THREAD", "true")
+        monkeypatch.setenv("SLACK_MAX_QUESTION_CHARS", "777")
+
+        s = cfg_mod.load_settings()
+        assert s.enabled is True
+        assert s.bot_token == "xoxb-real-token"
+        assert s.app_token == "xapp-real-token"
+        assert s.allowed_channel_ids == {"C1", "C2", "C3"}
+        assert s.allowed_user_ids == set()
+        assert s.max_question_chars == 777
+
+
+# ---------------------------------------------------------------------------
+# allowed channel/user 체크 메서드 단위
+# ---------------------------------------------------------------------------
+class TestAllowChecks:
+    def test_empty_allow_list_allows_all(self) -> None:
+        cfg = _make_settings()
+        assert cfg.is_channel_allowed("C-anything") is True
+        assert cfg.is_user_allowed("U-anything") is True
+        # None 도 허용 (실제 운영에서는 거의 발생 X)
+        assert cfg.is_channel_allowed(None) is True
+        assert cfg.is_user_allowed(None) is True
+
+    def test_channel_allow_list_filters(self) -> None:
+        cfg = _make_settings(allowed_channel_ids={"C1", "C2"})
+        assert cfg.is_channel_allowed("C1") is True
+        assert cfg.is_channel_allowed("C99") is False
+        assert cfg.is_channel_allowed(None) is False
+
+    def test_user_allow_list_filters(self) -> None:
+        cfg = _make_settings(allowed_user_ids={"U1"})
+        assert cfg.is_user_allowed("U1") is True
+        assert cfg.is_user_allowed("U2") is False
+        assert cfg.is_user_allowed(None) is False
+
+
+# ---------------------------------------------------------------------------
+# scripts/run_slack_bot.py 가 SLACK_BOT_ENABLED=false 에서 graceful 종료
+# ---------------------------------------------------------------------------
+class TestRunSlackBotEntrypoint:
+    def _load_module(self):
+        # scripts/ 는 패키지가 아니므로 importlib.util 로 직접 로드.
+        import importlib.util
+        root = Path(__file__).resolve().parents[1]
+        path = root / "scripts" / "run_slack_bot.py"
+        spec = importlib.util.spec_from_file_location("run_slack_bot_mod", path)
+        assert spec and spec.loader
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_disabled_returns_zero(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        monkeypatch.setenv("SLACK_BOT_ENABLED", "false")
+        mod = self._load_module()
+        rc = mod.main()
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "SLACK_BOT_ENABLED=false" in out
+
+    def test_missing_tokens_returns_two(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        monkeypatch.setenv("SLACK_BOT_ENABLED", "true")
+        monkeypatch.setenv("SLACK_BOT_MODE", "socket")
+        monkeypatch.setenv("SLACK_BOT_TOKEN", "")
+        monkeypatch.setenv("SLACK_APP_TOKEN", "")
+        mod = self._load_module()
+        rc = mod.main()
+        assert rc == 2
+        out = capsys.readouterr().out
+        assert "SLACK_BOT_TOKEN" in out
+        assert "SLACK_APP_TOKEN" in out
