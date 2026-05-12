@@ -50,10 +50,62 @@ def _make_settings(**overrides: Any) -> SlackBotSettings:
         allowed_user_ids=set(),
         reply_in_thread=True,
         max_question_chars=1000,
+        show_sources=False,
+        show_diagnostics=False,
+        max_response_chars=2500,
     )
     for k, v in overrides.items():
         setattr(base, k, v)
     return base
+
+
+# 실제 운영 답변과 비슷한 형태 (1~7번 섹션) 의 fake 결과.
+def _qa_result_with_full_sections() -> Dict[str, Any]:
+    answer = (
+        "## 1. 결론\n"
+        "카카오 메시지 발송 세팅 절차 요약.\n\n"
+        "## 2. 업무 처리 순서\n"
+        "1. 메시지 대시보드 접속\n"
+        "2. 소재 확인\n\n"
+        "## 3. 단계별 상세 설명\n"
+        "- 세부 설명 본문\n\n"
+        "## 4. 실무 주의사항\n"
+        "- 발송 전 비즈월렛 잔액 확인\n\n"
+        "## 5. 체크리스트\n"
+        "- [ ] 소재 확인\n"
+        "- [ ] 발송 일자 확인\n\n"
+        "## 6. 참고 근거\n"
+        "- 카카오 가이드 문서\n"
+        "- Slack 스레드 운영 공지\n\n"
+        "## 7. 불확실한 부분\n"
+        "- 실제 발송 시점은 별도 확인 필요\n"
+    )
+    return {
+        "answer": answer,
+        "sources": {
+            "primary_normalized_documents": [
+                {
+                    "label": "kakao_guide.md · 세팅 절차 (workflow)",
+                    "preview": "카카오 메시지 발송 세팅 시 ...",
+                },
+            ],
+            "raw_evidence": [],
+            "raw_fallback": [],
+        },
+        "diagnostics": {
+            "answer_mode": "knowledge_card",
+            "primary_normalized_document_count": 1,
+            "raw_evidence_count": 0,
+            "raw_fallback_count": 0,
+            "generation_skipped": False,
+            "skip_reason": None,
+            "model_name": "gemini-2.5-flash-lite",
+        },
+        "answer_mode": "knowledge_card",
+        "primary_normalized_document_count": 1,
+        "raw_evidence_count": 0,
+        "raw_fallback_count": 0,
+    }
 
 
 def _ok_qa_result() -> Dict[str, Any]:
@@ -127,6 +179,48 @@ class TestStripBotMentions:
         # mention 은 사라지고 양쪽 텍스트는 유지된다.
         assert "<@U1>" not in out
         assert "질문" in out and "본문" in out
+
+    def test_does_not_strip_debug_flag_dash(self) -> None:
+        """``<@bot> --debug 질문`` 처럼 mention 뒤에 ``--debug`` 가 와도
+        ``dash`` 가 잘려나가지 않아야 한다."""
+        out = handlers.strip_bot_mentions("<@U1> --debug 질문")
+        assert "--debug" in out
+        assert "질문" in out
+
+
+# ---------------------------------------------------------------------------
+# extract_debug_flag
+# ---------------------------------------------------------------------------
+class TestExtractDebugFlag:
+    def test_trailing_flag(self) -> None:
+        q, debug = handlers.extract_debug_flag("질문 본문 --debug")
+        assert q == "질문 본문"
+        assert debug is True
+
+    def test_leading_flag(self) -> None:
+        q, debug = handlers.extract_debug_flag("--debug 질문 본문")
+        assert q == "질문 본문"
+        assert debug is True
+
+    def test_middle_flag(self) -> None:
+        q, debug = handlers.extract_debug_flag("앞 --debug 뒤")
+        assert q == "앞 뒤"
+        assert debug is True
+
+    def test_no_flag(self) -> None:
+        q, debug = handlers.extract_debug_flag("디버그라는 단어가 본문에 있어도")
+        assert debug is False
+        # 본문은 변하지 않는다.
+        assert q == "디버그라는 단어가 본문에 있어도"
+
+    def test_substring_does_not_trigger(self) -> None:
+        """``--debugging`` 처럼 단어가 더 붙어 있으면 flag 로 보지 않는다."""
+        q, debug = handlers.extract_debug_flag("--debugging 옵션 안내")
+        assert debug is False
+        assert "--debugging" in q
+
+    def test_handles_empty(self) -> None:
+        assert handlers.extract_debug_flag("") == ("", False)
 
 
 # ---------------------------------------------------------------------------
@@ -238,18 +332,18 @@ class TestHandlerGuards:
 # formatter
 # ---------------------------------------------------------------------------
 class TestFormatter:
-    def test_format_qa_result_contains_all_sections(self) -> None:
+    def test_default_output_contains_answer_only(self) -> None:
+        """기본 출력은 답변 본문만. 참고 근거 / 진단 블록은 표시되지 않는다."""
         text = formatter.format_qa_result(_ok_qa_result())
-        assert "*답변*" in text
         assert "세팅 전에는 가이드" in text
-        assert "*참고 근거*" in text
-        assert "Normalized Document" in text
-        assert "Raw Evidence" in text
-        assert "*진단*" in text
-        assert "answer_mode" in text
-        assert "primary_normalized_document_count: 1" in text
-        assert "raw_evidence_count: 1" in text
-        assert "raw_fallback_count: 0" in text
+        # 별도 참고 근거 / 진단 블록은 노출되지 않는다.
+        assert "*참고 근거*" not in text
+        assert "Normalized Document" not in text
+        assert "Raw Evidence" not in text
+        assert "*진단*" not in text
+        assert "answer_mode" not in text
+        # legacy 헤딩 ``*답변*`` 도 더 이상 노출되지 않는다.
+        assert "*답변*" not in text
 
     def test_format_qa_result_handles_empty_answer(self) -> None:
         result = _ok_qa_result()
@@ -257,12 +351,19 @@ class TestFormatter:
         text = formatter.format_qa_result(result)
         assert "(답변이 비어 있습니다.)" in text
 
-    def test_format_qa_result_truncates_long_text(self) -> None:
+    def test_format_qa_result_respects_max_response_chars(self) -> None:
         result = _ok_qa_result()
         result["answer"] = "가" * 100_000
-        text = formatter.format_qa_result(result)
+        text = formatter.format_qa_result(result, max_response_chars=300)
+        # 본문은 300자 안으로 잘려야 하고, 트레일 "…" 가 붙는다.
+        assert len(text) <= 320  # margin 약간
+        assert text.endswith("…")
+
+    def test_format_qa_result_truncates_long_text_within_hard_limit(self) -> None:
+        result = _ok_qa_result()
+        result["answer"] = "가" * 100_000
+        text = formatter.format_qa_result(result, max_response_chars=999_999)
         assert len(text) <= formatter.SLACK_MESSAGE_HARD_LIMIT
-        assert text.endswith("…(메시지 길이 제한으로 일부 잘라냄)") or "…" in text
 
     def test_help_message_mentions_usage(self) -> None:
         msg = formatter.format_help_message()
@@ -272,6 +373,198 @@ class TestFormatter:
         msg = formatter.format_internal_error_message()
         assert "Traceback" not in msg
         assert "내부 오류" in msg
+
+
+# ---------------------------------------------------------------------------
+# trim_answer_for_slack
+# ---------------------------------------------------------------------------
+class TestTrimAnswerForSlack:
+    def test_trims_section_6_references(self) -> None:
+        answer = (
+            "## 1. 결론\n요약\n\n"
+            "## 5. 체크리스트\n- 항목\n\n"
+            "## 6. 참고 근거\n- 카카오 가이드\n- Slack 스레드\n"
+        )
+        out = formatter.trim_answer_for_slack(answer)
+        assert "## 1. 결론" in out
+        assert "## 5. 체크리스트" in out
+        assert "참고 근거" not in out
+        assert "카카오 가이드" not in out
+
+    def test_trims_section_7_uncertain(self) -> None:
+        answer = (
+            "## 1. 결론\n요약\n\n"
+            "## 7. 불확실한 부분\n- 실제 발송 시점은 ...\n"
+        )
+        out = formatter.trim_answer_for_slack(answer)
+        assert "## 1. 결론" in out
+        assert "불확실한 부분" not in out
+        assert "실제 발송 시점은" not in out
+
+    def test_trims_plain_references_heading(self) -> None:
+        answer = (
+            "## 결론\n요약\n\n"
+            "## 참고 근거\n- 어떤 가이드 문서\n"
+        )
+        out = formatter.trim_answer_for_slack(answer)
+        assert "## 결론" in out
+        assert "참고 근거" not in out
+
+    def test_trims_diagnostic_heading(self) -> None:
+        answer = (
+            "## 결론\n요약\n\n"
+            "### 진단\n- mode: knowledge_card\n"
+        )
+        out = formatter.trim_answer_for_slack(answer)
+        assert "결론" in out
+        assert "진단" not in out
+        assert "knowledge_card" not in out
+
+    def test_trims_emphasized_references_heading(self) -> None:
+        answer = (
+            "*결론*\n요약 본문\n\n"
+            "*참고 근거*\n- 어떤 가이드\n"
+        )
+        out = formatter.trim_answer_for_slack(answer)
+        assert "*결론*" in out
+        assert "*참고 근거*" not in out
+        assert "어떤 가이드" not in out
+
+    def test_keeps_inline_reference_words_in_body(self) -> None:
+        """본문 문장 안에 "참고 근거" 라는 단어가 들어가는 경우는 잘리면 안 된다."""
+        answer = (
+            "## 1. 결론\n"
+            "위 절차는 가이드의 참고 근거 항목을 따라 정리한 것입니다.\n"
+        )
+        out = formatter.trim_answer_for_slack(answer)
+        assert "참고 근거" in out
+        assert "결론" in out
+
+    def test_keeps_text_when_no_trim_marker(self) -> None:
+        answer = "## 1. 결론\n요약\n## 2. 순서\n1. 첫 단계\n"
+        out = formatter.trim_answer_for_slack(answer)
+        assert out.strip() == answer.strip()
+
+    def test_handles_empty(self) -> None:
+        assert formatter.trim_answer_for_slack("") == ""
+        assert formatter.trim_answer_for_slack(None) == ""  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# convert_markdown_headings_to_slack
+# ---------------------------------------------------------------------------
+class TestHeadingConversion:
+    def test_converts_double_hash(self) -> None:
+        assert (
+            formatter.convert_markdown_headings_to_slack("## 1. 결론")
+            == "*1. 결론*"
+        )
+
+    def test_converts_various_levels(self) -> None:
+        out = formatter.convert_markdown_headings_to_slack(
+            "# 제목\n## 1. 결론\n### 세부"
+        )
+        assert "*제목*" in out
+        assert "*1. 결론*" in out
+        assert "*세부*" in out
+        assert "#" not in out
+
+    def test_keeps_body_lines_unchanged(self) -> None:
+        out = formatter.convert_markdown_headings_to_slack(
+            "## 1. 결론\n결론 본문 첫 줄\n- bullet"
+        )
+        assert "*1. 결론*" in out
+        assert "결론 본문 첫 줄" in out
+        assert "- bullet" in out
+
+    def test_does_not_touch_mid_line_hash(self) -> None:
+        out = formatter.convert_markdown_headings_to_slack(
+            "이것은 # 해시 문자가 있는 본문입니다."
+        )
+        # heading 변환이 일어나지 않아야 한다.
+        assert out == "이것은 # 해시 문자가 있는 본문입니다."
+
+    def test_strips_existing_asterisks_in_heading(self) -> None:
+        out = formatter.convert_markdown_headings_to_slack("## *1. 결론*")
+        assert out == "*1. 결론*"
+        assert "**" not in out
+
+
+# ---------------------------------------------------------------------------
+# tidy_slack_text
+# ---------------------------------------------------------------------------
+class TestTidySlackText:
+    def test_collapses_excess_blank_lines(self) -> None:
+        text = "a\n\n\n\nb\n\n\n\n\nc"
+        out = formatter.tidy_slack_text(text)
+        assert out == "a\n\nb\n\nc"
+
+    def test_replaces_special_whitespace(self) -> None:
+        text = "결\u00a0론  요약"
+        out = formatter.tidy_slack_text(text)
+        # non-breaking space 가 일반 공백으로 변환되어야 한다.
+        assert "\u00a0" not in out
+        assert "결 론" in out
+
+
+# ---------------------------------------------------------------------------
+# format_qa_result : full section trim + heading 변환 + 옵션 토글
+# ---------------------------------------------------------------------------
+class TestFormatQaResultWithRealisticAnswer:
+    def test_default_strips_sections_6_and_7_and_converts_headings(self) -> None:
+        text = formatter.format_qa_result(_qa_result_with_full_sections())
+        # 1~5번 섹션은 살아 있고 Slack mrkdwn 으로 변환되었다.
+        assert "*1. 결론*" in text
+        assert "*2. 업무 처리 순서*" in text
+        assert "*3. 단계별 상세 설명*" in text
+        assert "*4. 실무 주의사항*" in text
+        assert "*5. 체크리스트*" in text
+        # 6, 7번 섹션과 본문은 모두 제거.
+        assert "참고 근거" not in text
+        assert "불확실한 부분" not in text
+        assert "카카오 가이드 문서" not in text
+        assert "실제 발송 시점은" not in text
+        # markdown heading 표식은 남아있지 않다.
+        assert "## " not in text
+        # 기본은 진단 블록도 미표시.
+        assert "*진단*" not in text
+        assert "answer_mode" not in text
+
+    def test_debug_mode_shows_diagnostics_and_short_sources(self) -> None:
+        text = formatter.format_qa_result(
+            _qa_result_with_full_sections(),
+            debug=True,
+        )
+        # 본문 trim 은 그대로 적용.
+        assert "*1. 결론*" in text
+        assert "## 6. 참고 근거" not in text
+        # debug 에서는 진단이 표시.
+        assert "*진단*" in text
+        assert "answer_mode" in text
+        assert "primary_normalized_document_count: 1" in text
+        # debug source 요약이 노출.
+        assert "참고 근거 (debug)" in text
+        assert "kakao_guide.md" in text
+
+    def test_show_sources_option_enables_full_block(self) -> None:
+        text = formatter.format_qa_result(
+            _qa_result_with_full_sections(),
+            show_sources=True,
+        )
+        assert "*참고 근거*" in text
+        assert "Normalized Document" in text
+        # show_diagnostics 는 켜지 않았으니 진단은 미표시.
+        assert "*진단*" not in text
+
+    def test_show_diagnostics_option_enables_only_diagnostics(self) -> None:
+        text = formatter.format_qa_result(
+            _qa_result_with_full_sections(),
+            show_diagnostics=True,
+        )
+        assert "*진단*" in text
+        assert "answer_mode" in text
+        # show_sources 는 켜지 않음.
+        assert "*참고 근거*" not in text
 
 
 # ---------------------------------------------------------------------------
@@ -307,10 +600,14 @@ class TestHandlerEndToEndWithMockAdapter:
         kw = post.calls[0]
         assert kw["channel"] == "C-public"
         assert kw["thread_ts"] == "1700000000.000100"
-        assert "*답변*" in kw["text"]
+        # 기본 출력은 답변 본문만. 별도 답변/참고 근거/진단 헤더는 노출되지 않는다.
         assert "세팅 전에는 가이드" in kw["text"]
+        assert "*답변*" not in kw["text"]
+        assert "*참고 근거*" not in kw["text"]
+        assert "*진단*" not in kw["text"]
         # 진단 dict 반환
         assert out["responded"] is True
+        assert out.get("debug") is False
         assert out["answer_mode"] == "knowledge_card"
         assert out["primary_normalized_document_count"] == 1
 
@@ -356,6 +653,41 @@ class TestHandlerEndToEndWithMockAdapter:
         # traceback / 내부 메시지가 새어나가지 않는다.
         assert "secret context" not in post.calls[0]["text"]
         assert "Traceback" not in post.calls[0]["text"]
+
+    def test_handler_strips_debug_flag_and_enables_diagnostics(self) -> None:
+        post = _FakePost()
+        cfg = _make_settings()
+        captured: Dict[str, Any] = {}
+
+        def _answer(**kwargs: Any) -> Dict[str, Any]:
+            captured.update(kwargs)
+            return _qa_result_with_full_sections()
+
+        out = handlers.handle_app_mention(
+            event={
+                "text": "<@U999> 카카오 메시지 발송 세팅 절차 알려줘 --debug",
+                "channel": "C-public",
+                "user": "U-asker",
+                "ts": "1.0",
+            },
+            post=post,
+            settings=cfg,
+            answer_fn=_answer,
+        )
+        # qa_pipeline 에는 ``--debug`` 가 빠진 질문이 전달되어야 한다.
+        assert "--debug" not in captured["question"]
+        assert "카카오 메시지 발송 세팅 절차" in captured["question"]
+        # debug=True 로 처리되었다.
+        assert out["debug"] is True
+        # Slack 메시지에는 진단 정보와 짧은 source 요약이 포함된다.
+        text = post.calls[0]["text"]
+        assert "*1. 결론*" in text
+        assert "*진단*" in text
+        assert "answer_mode" in text
+        assert "참고 근거 (debug)" in text
+        # 본문의 6/7번 섹션은 여전히 잘려나가야 한다.
+        assert "## 6. 참고 근거" not in text
+        assert "## 7. 불확실한 부분" not in text
 
 
 # ---------------------------------------------------------------------------
@@ -420,6 +752,9 @@ class TestConfigValidation:
         monkeypatch.setenv("SLACK_ALLOWED_USER_IDS", "")
         monkeypatch.setenv("SLACK_REPLY_IN_THREAD", "true")
         monkeypatch.setenv("SLACK_MAX_QUESTION_CHARS", "777")
+        monkeypatch.setenv("SLACK_SHOW_SOURCES", "true")
+        monkeypatch.setenv("SLACK_SHOW_DIAGNOSTICS", "true")
+        monkeypatch.setenv("SLACK_MAX_RESPONSE_CHARS", "1234")
 
         s = cfg_mod.load_settings()
         assert s.enabled is True
@@ -428,6 +763,9 @@ class TestConfigValidation:
         assert s.allowed_channel_ids == {"C1", "C2", "C3"}
         assert s.allowed_user_ids == set()
         assert s.max_question_chars == 777
+        assert s.show_sources is True
+        assert s.show_diagnostics is True
+        assert s.max_response_chars == 1234
 
 
 # ---------------------------------------------------------------------------

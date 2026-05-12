@@ -11,7 +11,7 @@ Slack ``app_mention`` 이벤트 핸들러.
 from __future__ import annotations
 
 import re
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from src.logger import get_logger
 from src.slack_bot import formatter
@@ -24,6 +24,9 @@ log = get_logger(__name__)
 _MENTION_PATTERN = re.compile(r"<@([UW][A-Z0-9]+)(\|[^>]*)?>")
 # 그 외에 흔한 prefix 한국어 호출 ("봇아", "봇:", "봇 ")
 _INFORMAL_PREFIXES = ("봇아", "봇:", "Bot:", "bot:")
+# 질문 끝에 ``--debug`` 가 붙으면 디버그 모드로 동작한다. 위치는 어디든 OK.
+# (앞/뒤/중간 토큰)
+_DEBUG_FLAG_PATTERN = re.compile(r"(?:^|\s)--debug\b", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -47,12 +50,14 @@ def strip_bot_mentions(text: Optional[str]) -> str:
         return ""
     cleaned = _MENTION_PATTERN.sub(" ", text)
     cleaned = cleaned.replace("\u200b", "").strip()
-    # mention 직후의 콜론/하이픈 등 정리
-    cleaned = re.sub(r"^[\s,.\-:;>]+", "", cleaned)
+    # mention 직후의 콜론/세미콜론/꺾쇠 등 정리.
+    # NOTE: ``--debug`` 같이 사용자가 의도해 보낸 flag 가 잘려나가지 않도록
+    # ``-`` (dash) 는 leading 정리 대상에서 의도적으로 제외한다.
+    cleaned = re.sub(r"^[\s,.:;>]+", "", cleaned)
     cleaned = re.sub(r"[\s]+", " ", cleaned).strip()
     for pfx in _INFORMAL_PREFIXES:
         if cleaned.lower().startswith(pfx.lower()):
-            cleaned = cleaned[len(pfx):].lstrip(" ,.-:;>")
+            cleaned = cleaned[len(pfx):].lstrip(" ,.:;>")
             break
     return cleaned
 
@@ -64,6 +69,29 @@ def clip_question(text: str, max_chars: int) -> str:
     if max_chars and max_chars > 0 and len(text) > max_chars:
         return text[:max_chars]
     return text
+
+
+def extract_debug_flag(text: str) -> Tuple[str, bool]:
+    """
+    질문 텍스트에서 ``--debug`` 플래그를 떼어낸다.
+
+    Returns
+    -------
+    (clean_question, debug_on)
+        - ``--debug`` 가 들어 있었다면 해당 토큰을 제거한 질문과 ``True``.
+        - 없었다면 원본과 ``False``.
+
+    본문 중간에 ``--debug`` 가 있어도 떼어낸다 — 단어 경계만 일치하면 된다.
+    예: ``"카카오 메시지 발송 세팅 절차 알려줘 --debug"``
+       → ``("카카오 메시지 발송 세팅 절차 알려줘", True)``
+    """
+    if not text:
+        return ("", False)
+    if not _DEBUG_FLAG_PATTERN.search(text):
+        return (text, False)
+    cleaned = _DEBUG_FLAG_PATTERN.sub(" ", text)
+    cleaned = re.sub(r"[\s]+", " ", cleaned).strip()
+    return (cleaned, True)
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +156,9 @@ def handle_app_mention(
     # 2) mention 제거 + 질문 정제
     question = strip_bot_mentions(raw_text)
 
+    # 2-1) ``--debug`` 플래그 분리 (qa_pipeline 으로는 보내지 않음)
+    question, debug = extract_debug_flag(question)
+
     # 3) 질문이 비어 있으면 사용법 안내
     if not question:
         _safe_post(
@@ -162,7 +193,20 @@ def handle_app_mention(
         return {"responded": True, "reason": "qa_error"}
 
     # 6) Slack 메시지로 변환
-    body = formatter.format_qa_result(result, question=question)
+    # 기본 정책:
+    #  - 운영자가 ``SLACK_SHOW_SOURCES=true`` / ``SLACK_SHOW_DIAGNOSTICS=true`` 로
+    #    설정해 두었으면 항상 표시.
+    #  - 그렇지 않으면 사용자가 질문에 ``--debug`` 를 붙였을 때만 표시.
+    show_sources = True if cfg.show_sources else (True if debug else None)
+    show_diagnostics = True if cfg.show_diagnostics else (True if debug else None)
+    body = formatter.format_qa_result(
+        result,
+        question=question,
+        debug=debug,
+        show_sources=show_sources,
+        show_diagnostics=show_diagnostics,
+        max_response_chars=cfg.max_response_chars,
+    )
     if truncated:
         body = (
             formatter.format_too_long_message(cfg.max_question_chars)
@@ -180,6 +224,7 @@ def handle_app_mention(
     return {
         "responded": True,
         "reason": "ok",
+        "debug": debug,
         "answer_mode": result.get("answer_mode"),
         "primary_normalized_document_count": result.get(
             "primary_normalized_document_count"

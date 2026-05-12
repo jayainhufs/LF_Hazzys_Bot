@@ -20,6 +20,13 @@ Slack Bot 프로세스에서만 의미가 있고, Streamlit/CLI 흐름에는 영
                                  모든 유저 허용.
 - ``SLACK_REPLY_IN_THREAD``    : 항상 thread 로 답변할지 여부 (기본 ``true``).
 - ``SLACK_MAX_QUESTION_CHARS`` : 한 번에 처리할 질문의 최대 글자수 (기본 1000).
+- ``SLACK_SHOW_SOURCES``       : 기본 출력에 참고 근거 블록 포함 여부 (기본 ``false``).
+                                 ``--debug`` 모드는 이 값과 무관하게 짧은 source
+                                 요약을 표시한다.
+- ``SLACK_SHOW_DIAGNOSTICS``   : 기본 출력에 진단 블록 포함 여부 (기본 ``false``).
+                                 ``--debug`` 모드는 이 값과 무관하게 진단을 표시한다.
+- ``SLACK_MAX_RESPONSE_CHARS`` : Slack 답변 메시지의 최대 글자수 (기본 ``2500``).
+                                 초과 시 답변 본문 끝을 잘라낸다.
 """
 from __future__ import annotations
 
@@ -104,6 +111,10 @@ class SlackBotSettings:
     allowed_user_ids: Set[str] = field(default_factory=set)
     reply_in_thread: bool = True
     max_question_chars: int = 1000
+    # ----- 출력 가공 옵션 (Slack formatter 가 사용) -----
+    show_sources: bool = False
+    show_diagnostics: bool = False
+    max_response_chars: int = 2500
 
     # ------------------------------------------------------------------
     @classmethod
@@ -121,6 +132,13 @@ class SlackBotSettings:
         )
         if s.max_question_chars <= 0:
             s.max_question_chars = 1000
+        s.show_sources = _env_bool("SLACK_SHOW_SOURCES", s.show_sources)
+        s.show_diagnostics = _env_bool("SLACK_SHOW_DIAGNOSTICS", s.show_diagnostics)
+        s.max_response_chars = _env_int(
+            "SLACK_MAX_RESPONSE_CHARS", s.max_response_chars
+        )
+        if s.max_response_chars <= 0:
+            s.max_response_chars = 2500
         return s
 
     # ------------------------------------------------------------------
