@@ -198,22 +198,36 @@
 
 - Normalized Document 가 있는데도 raw fallback 으로 떨어지는 문제를 줄인다.
 
-**예상 작업**
+**구현 내용**
 
-- `content_type=normalized_document` 인식 확인
-- legacy `content_type=knowledge_card` 호환 확인
-- `retrieval_role=primary_card` 승격 조건 점검
-- `primary_normalized_document_count` 집계 확인
-- Normalized Document 후보가 raw chunk 보다 적절히 우선되는지 확인
+- 이번 Step 은 정책을 **새로** 추가하지 않고, Step 1 + Step 2 결과로 동작이
+  의도대로 작동하는지 **점검 + 회귀 방어 테스트** 를 보강한다.
+- public helper alias 추가.
+  - `src/rag/reranker.py` 에 `get_normalized_document_type(chunk_or_meta)` 공개 함수 추가.
+  - 내부 `_resolve_normalized_document_type` 을 위임하며, 신규 `normalized_document_type`
+    우선, legacy `card_type` fallback 으로 인식한다.
+- 점검 / 회귀 테스트 파일 신규 추가: `tests/test_normalized_document_priority.py`.
+  - Normalized Document 인식 (`content_type=normalized_document` / 신규 표준,
+    legacy `knowledge_card`, `source_type=llm_normalized`).
+  - document_type 해석 (신규 / legacy 키).
+  - match Normalized Document 의 `primary_card` 승격 및 raw chunk 보다 우선.
+  - mismatch Normalized Document 는 Step 2 정책에 따라 `raw_fallback` 으로 demote 유지.
+  - `primary_normalized_document_count` / `primary_normalized_documents` 집계 정확성.
+  - `answer_mode="knowledge_card"` legacy 라벨 유지.
+  - `normalized_document_boost` / `knowledge_card_boost` (legacy alias) 모두 채워짐 검증.
+  - 실제 문제 케이스: meta workflow + meta raw + kakao normalized 시나리오.
+  - Slack `--debug` 출력에 `primary_normalized_document_count` 노출, 기본 출력 진단 숨김.
+- 기존 인식 로직 / boost 정책 / 환경변수는 변경하지 않음.
 
 **주의**
 
 - 신규 표준 명칭 (`normalized_document`) 과 legacy 명칭 (`knowledge_card`) 을 모두 인식해야 한다.
 - 색인 데이터를 다시 만들지 않아도 동작해야 한다.
+- Step 2 의 `topic_mismatch_demoted` 정책이 그대로 유지되어야 한다 (mismatch chunk 가 다시 primary 로 끌려가지 않음).
 
 **현재 상태**
 
-- 미시작.
+- ✅ 완료됨.
 
 ---
 
@@ -352,4 +366,5 @@
 - ✅ Slack 기본 출력 간결화 완료
 - ✅ MVP 2차 Step 1 — Retrieval Diagnostics 강화 완료
 - ✅ MVP 2차 Step 2 — Topic-aware Retrieval / Penalty 강화 완료
-- ⏭️ 다음 예정 Step 은 **Step 3 — Normalized Document 우선순위 점검**
+- ✅ MVP 2차 Step 3 — Normalized Document 우선순위 점검 완료
+- ⏭️ 다음 예정 Step 은 **Step 4 — Raw Fallback 오남용 방지**

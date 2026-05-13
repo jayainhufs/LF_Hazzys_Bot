@@ -692,6 +692,27 @@ def _resolve_normalized_document_type(meta: Dict[str, Any]) -> str:
     return str(val or "").strip().lower()
 
 
+def get_normalized_document_type(chunk_or_meta: Any) -> str:
+    """
+    Normalized Document 의 document_type 을 반환하는 공개 helper.
+
+    - ``RetrievedChunk`` 또는 dict-like metadata 모두 허용한다.
+    - 신규 키 ``normalized_document_type`` 을 우선 사용하고,
+      legacy 키 ``card_type`` 을 fallback 으로 인식한다.
+    - 값이 없으면 빈 문자열을 반환한다.
+
+    MVP 2차 Step 3 (Normalized Document 우선순위 점검) 의 일관성 보장을 위해
+    노출하는 public alias 이며, 내부적으로는 ``_resolve_normalized_document_type`` 을
+    그대로 위임한다.
+    """
+    if chunk_or_meta is None:
+        return ""
+    if isinstance(chunk_or_meta, dict):
+        return _resolve_normalized_document_type(chunk_or_meta)
+    md = getattr(chunk_or_meta, "metadata", {}) or {}
+    return _resolve_normalized_document_type(md)
+
+
 def normalized_document_type_boost_for(
     document_type: Optional[str],
     query_intent: Optional[List[str]] = None,
