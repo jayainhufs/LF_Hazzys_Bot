@@ -262,13 +262,25 @@ if st.button("검색 실행", type="primary", disabled=not query.strip()):
     q_intent = summary.get("query_intent") or []
     q_date = summary.get("query_date")
     q_date_text = summary.get("query_date_text")
+    q_topic_single = summary.get("query_topic") or (q_topics[0] if q_topics else None)
 
     st.caption(
         f"keyword class: {', '.join(qc_tags) if qc_tags else '(none)'} · "
+        f"query_topic: {q_topic_single or '(none)'} · "
         f"query_topics: {', '.join(q_topics) if q_topics else '(none)'} · "
         f"query_intent: {', '.join(q_intent) if q_intent else '(none)'} · "
         f"query_date: {q_date or '(none)'}"
         + (f" ({q_date_text})" if q_date_text else "")
+    )
+    # MVP 2차 Step 1: Retrieval Diagnostics 강화
+    # 후보 chunk 가 어떤 구성인지 (Normalized Document vs raw) 그리고 topic
+    # mismatch 가 얼마나 발생했는지 한 줄로 노출 (UI 대규모 변경 없이 caption 만 추가).
+    st.caption(
+        f"retrieved_count: {summary.get('retrieved_count', summary.get('candidate_count', 0))} · "
+        f"passed_count: {summary.get('passed_count', 0)} · "
+        f"normalized_document_candidate: {summary.get('normalized_document_candidate_count', 0)} · "
+        f"raw_candidate: {summary.get('raw_candidate_count', 0)} · "
+        f"topic_mismatch: {summary.get('topic_mismatch_count', 0)}"
     )
     st.caption(
         f"min_sim={summary.get('min_similarity'):.2f} · "

@@ -102,9 +102,21 @@ def _chunk_safe_preview(chunk: RetrievedChunk, max_chars: int = 240) -> str:
 
 
 def _serialize_chunks(chunks: List[RetrievedChunk]) -> List[Dict[str, Any]]:
+    """
+    Slack formatter 가 사용할 source dict 로 직렬화한다.
+
+    MVP 2차 Step 1 (Retrieval Diagnostics 강화):
+    Slack 기본 출력에는 영향을 주지 않지만, ``--debug`` 모드에서 source 별
+    진단 정보를 짧게 노출할 수 있도록 필드를 보강한다 (검색 정책은 변경하지
+    않음).
+    """
     out: List[Dict[str, Any]] = []
     for c in chunks or []:
         md = c.metadata or {}
+        # similarity_score 는 rerank_simple 가 metadata 에 채워둔 진단값.
+        similarity_score = md.get("similarity_score")
+        if similarity_score is None:
+            similarity_score = c.score
         out.append(
             {
                 "label": _chunk_label(c),
@@ -113,13 +125,28 @@ def _serialize_chunks(chunks: List[RetrievedChunk]) -> List[Dict[str, Any]]:
                 "section_title": c.section_title,
                 "content_type": c.content_type,
                 "source_type": c.source_type,
+                # source_category 는 source_type 의 사용자 친화적 표현으로
+                # uploaded_category 와 동일한 값을 alias 로 둔다.
+                "source_category": c.uploaded_category,
                 "uploaded_category": c.uploaded_category,
                 "score": c.score,
+                "similarity_score": similarity_score,
                 "final_score": c.final_score,
                 "normalized_document_type": (
                     md.get("normalized_document_type") or md.get("card_type")
                 ),
                 "primary_topic": md.get("primary_topic"),
+                "topic_tags": md.get("topic_tags") or [],
+                # 검색 진단 metadata (UI/debug 용)
+                "retrieval_role": md.get("retrieval_role"),
+                "topic_match": md.get("topic_match"),
+                "date_match": md.get("date_match"),
+                "normalized_document_boost": (
+                    md.get("normalized_document_boost")
+                    or md.get("knowledge_card_boost")
+                ),
+                "topic_boost": md.get("topic_boost"),
+                "date_boost": md.get("date_boost"),
             }
         )
     return out
@@ -202,6 +229,20 @@ def answer_slack_question(
         "raw_fallback": _serialize_chunks(raw_fallback_chunks),
     }
 
+    # ----------------------------------------------------------------------
+    # MVP 2차 Step 1: Retrieval Diagnostics 강화
+    #
+    # qa_pipeline 이 top-level 로 노출하기 시작한 진단 필드를 그대로 전달한다.
+    # Slack 기본 답변에는 영향이 없고, ``--debug`` 모드에서만 formatter 가
+    # 이 dict 의 값을 짧게 보여준다.
+    # ----------------------------------------------------------------------
+    retrieval_summary: Dict[str, Any] = raw.get("retrieval_summary") or {}
+
+    def _first_or_none(value: Any) -> Any:
+        if isinstance(value, list) and value:
+            return value[0]
+        return value if value not in (None, []) else None
+
     diagnostics: Dict[str, Any] = {
         "answer_mode": answer_mode,
         "primary_normalized_document_count": primary_count,
@@ -214,6 +255,37 @@ def answer_slack_question(
         "embedding_model": raw.get("embedding_model") or "",
         "rewritten_query": raw.get("rewritten_query"),
         "answer_format_label": raw.get("answer_format_label"),
+        # MVP 2차 Step 1: query / candidate 진단 (Slack debug 표시용)
+        "query_topic": raw.get("query_topic") or _first_or_none(
+            retrieval_summary.get("query_topics")
+        ),
+        "query_topics": list(raw.get("query_topics") or retrieval_summary.get("query_topics") or []),
+        "query_intent": list(raw.get("query_intent") or retrieval_summary.get("query_intent") or []),
+        "query_date": raw.get("query_date") or retrieval_summary.get("query_date"),
+        "retrieved_count": int(
+            raw.get("retrieved_count")
+            or retrieval_summary.get("retrieved_count")
+            or retrieval_summary.get("candidate_count")
+            or 0
+        ),
+        "passed_count": int(
+            raw.get("passed_count") or retrieval_summary.get("passed_count") or 0
+        ),
+        "topic_mismatch_count": int(
+            raw.get("topic_mismatch_count")
+            or retrieval_summary.get("topic_mismatch_count")
+            or 0
+        ),
+        "normalized_document_candidate_count": int(
+            raw.get("normalized_document_candidate_count")
+            or retrieval_summary.get("normalized_document_candidate_count")
+            or 0
+        ),
+        "raw_candidate_count": int(
+            raw.get("raw_candidate_count")
+            or retrieval_summary.get("raw_candidate_count")
+            or 0
+        ),
     }
 
     return {

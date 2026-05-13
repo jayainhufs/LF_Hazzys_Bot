@@ -32,9 +32,11 @@ SLACK_MESSAGE_HARD_LIMIT = 3500
 # ``SlackBotSettings.max_response_chars`` 가 1순위로 사용된다.
 DEFAULT_MAX_RESPONSE_CHARS = 2500
 # debug 모드에서 노출할 source 라벨 개수.
-DEBUG_MAX_SOURCES = 2
+# MVP 2차 Step 1: 검색 진단 가시성을 위해 2 -> 3 으로 확장.
+DEBUG_MAX_SOURCES = 3
 # debug 모드 source preview 최대 글자수.
-DEBUG_SOURCE_PREVIEW_LIMIT = 160
+# raw content 노출을 늘리는 게 아니라 진단 라벨을 함께 보여주기 위해 약간 축소.
+DEBUG_SOURCE_PREVIEW_LIMIT = 120
 TRUNCATION_NOTICE = "\n…(메시지 길이 제한으로 일부 잘라냄)"
 
 # Slack 에서 제거할 본문 섹션 헤더들.
@@ -391,7 +393,16 @@ def _format_sources_full(sources: Dict[str, List[Dict[str, Any]]]) -> str:
 
 
 def _format_sources_debug(sources: Dict[str, List[Dict[str, Any]]]) -> str:
-    """``--debug`` 모드에서 사용하는 짧은 근거 요약 (라벨 위주, preview 짧게)."""
+    """
+    ``--debug`` 모드에서 사용하는 짧은 근거 요약.
+
+    MVP 2차 Step 1 (Retrieval Diagnostics 강화):
+    label / preview 뿐만 아니라 검색 진단 정보를 함께 노출한다 — 단, raw 원문
+    노출을 늘리지 않도록 라벨 위주로 짧게만 보여준다.
+
+    각 source 에는 (가능하면) 다음 진단 라인을 붙인다:
+        ``content_type=... · primary_topic=... · role=... · final=...``
+    """
     if not sources:
         return ""
     primaries = sources.get("primary_normalized_documents") or []
@@ -408,16 +419,48 @@ def _format_sources_debug(sources: Dict[str, List[Dict[str, Any]]]) -> str:
     items = pool[:DEBUG_MAX_SOURCES]
     lines = ["*참고 근거 (debug)*"]
     for it in items:
-        label = (it.get("label") or "").strip() or "(이름 없음)"
+        label = (it.get("label") or "").strip()
+        if not label:
+            label = (it.get("file_name") or "(이름 없음)").strip()
         preview = _clip((it.get("preview") or "").strip(), DEBUG_SOURCE_PREVIEW_LIMIT)
+        diag_line = _format_source_diag_line(it)
+        lines.append(f"• {label}")
+        if diag_line:
+            lines.append(f"   › {diag_line}")
         if preview:
-            lines.append(f"• {label}\n   › {preview}")
-        else:
-            lines.append(f"• {label}")
+            lines.append(f"   › {preview}")
     extra = len(pool) - len(items)
     if extra > 0:
         lines.append(f"• …외 {extra}건")
     return "\n".join(lines)
+
+
+def _format_source_diag_line(it: Dict[str, Any]) -> str:
+    """
+    Slack ``--debug`` 모드에서 source 한 줄당 사용하는 진단 라인.
+
+    표시 필드 (값이 있을 때만):
+    - ``content_type``
+    - ``primary_topic``
+    - ``retrieval_role``
+    - ``final_score``
+
+    raw 원문이나 긴 metadata 는 노출하지 않는다.
+    """
+    parts: List[str] = []
+    ct = (it.get("content_type") or "").strip()
+    if ct:
+        parts.append(f"content_type=`{ct}`")
+    pt = (it.get("primary_topic") or "").strip()
+    if pt:
+        parts.append(f"primary_topic=`{pt}`")
+    role = (it.get("retrieval_role") or "").strip()
+    if role:
+        parts.append(f"role=`{role}`")
+    final_score = it.get("final_score")
+    if isinstance(final_score, (int, float)):
+        parts.append(f"final=`{float(final_score):.3f}`")
+    return " · ".join(parts)
 
 
 def _format_source_lines(
@@ -451,9 +494,51 @@ def _format_diagnostics(
     raw_fallback_count: int,
     answer_mode: str,
 ) -> str:
+    """
+    Slack ``--debug`` 진단 블록.
+
+    MVP 2차 Step 1 (Retrieval Diagnostics 강화):
+    검색 단계가 왜 그런 결과를 냈는지 보이도록 ``query_topic`` /
+    ``query_intent`` / ``query_date`` / ``retrieved_count`` /
+    ``passed_count`` / ``topic_mismatch_count`` / candidate 구성을 함께
+    표시한다. 표시 정책만 강화하고, 점수/필터/penalty 는 변경하지 않는다.
+    """
     lines: List[str] = []
     mode = diagnostics.get("answer_mode") or answer_mode or "unknown"
     lines.append(f"• answer_mode: `{mode}`")
+
+    # ----- query 진단 -----
+    query_topic = diagnostics.get("query_topic")
+    if query_topic:
+        lines.append(f"• query_topic: `{query_topic}`")
+    else:
+        lines.append("• query_topic: `(none)`")
+
+    intents = diagnostics.get("query_intent") or []
+    if isinstance(intents, list) and intents:
+        lines.append(f"• query_intent: `{', '.join(str(x) for x in intents)}`")
+
+    q_date = diagnostics.get("query_date")
+    if q_date:
+        lines.append(f"• query_date: `{q_date}`")
+
+    # ----- retrieval 진단 -----
+    retrieved = int(diagnostics.get("retrieved_count") or 0)
+    passed = int(diagnostics.get("passed_count") or 0)
+    if retrieved or passed:
+        lines.append(f"• retrieved_count: {retrieved} · passed_count: {passed}")
+
+    nd_cand = int(diagnostics.get("normalized_document_candidate_count") or 0)
+    raw_cand = int(diagnostics.get("raw_candidate_count") or 0)
+    if nd_cand or raw_cand:
+        lines.append(
+            f"• candidate: normalized_document={nd_cand} · raw={raw_cand}"
+        )
+
+    mismatch = int(diagnostics.get("topic_mismatch_count") or 0)
+    if mismatch:
+        lines.append(f"• topic_mismatch_count: {mismatch}")
+
     lines.append(f"• primary_normalized_document_count: {primary_count}")
     lines.append(f"• raw_evidence_count: {raw_evidence_count}")
     lines.append(f"• raw_fallback_count: {raw_fallback_count}")

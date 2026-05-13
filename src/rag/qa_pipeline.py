@@ -94,6 +94,16 @@ class QAPipeline:
                 "knowledge_card_answer_template_version": (
                     settings.knowledge_card_answer_template_version
                 ),
+                # MVP 2차 Step 1: Retrieval Diagnostics 강화 — empty 케이스에도 default 값을 노출.
+                "query_topic": None,
+                "query_topics": [],
+                "query_intent": [],
+                "query_date": None,
+                "retrieved_count": 0,
+                "passed_count": 0,
+                "topic_mismatch_count": 0,
+                "normalized_document_candidate_count": 0,
+                "raw_candidate_count": 0,
             }
 
         # 1) 정제
@@ -228,10 +238,18 @@ class QAPipeline:
                 "used_chunks": len(used_chunks),
                 "query_class": summary.get("query_class"),
                 "query_date": summary.get("query_date"),
+                "query_topic": summary.get("query_topic"),
                 "query_topics": summary.get("query_topics"),
                 "query_intent": summary.get("query_intent"),
                 "enable_date_filter": summary.get("enable_date_filter"),
                 "anonymize_output": summary.get("anonymize_output"),
+                # MVP 2차 Step 1: Retrieval Diagnostics 강화
+                "retrieved_count": summary.get("retrieved_count"),
+                "topic_mismatch_count": summary.get("topic_mismatch_count"),
+                "normalized_document_candidate_count": summary.get(
+                    "normalized_document_candidate_count"
+                ),
+                "raw_candidate_count": summary.get("raw_candidate_count"),
                 # Task 7: Normalized Document 중심 답변 진단
                 "answer_mode": answer_mode,
                 "answer_format_label": answer_format_label,
@@ -293,6 +311,32 @@ class QAPipeline:
             "knowledge_card_answer_template_version": (
                 settings.knowledge_card_answer_template_version
             ),
+            # ----------------------------------------------------------------
+            # MVP 2차 Step 1: Retrieval Diagnostics 강화
+            #
+            # qa_pipeline 반환 dict 의 top-level 에도 retrieval diagnostics 를
+            # 명시적으로 노출한다. (retrieval_summary 안에도 같은 값이 있지만,
+            # Streamlit / Slack adapter / 테스트에서 평탄한 dict 로 바로 읽을 수
+            # 있도록 중복 노출한다.)
+            #
+            # 이 Step 에서는 검색 점수/필터/penalty 정책을 바꾸지 않는다 — 단지
+            # 왜 그런 결과가 나왔는지 더 잘 보이게 한다.
+            # ----------------------------------------------------------------
+            "query_topic": summary.get("query_topic"),
+            "query_topics": list(summary.get("query_topics") or []),
+            "query_intent": list(summary.get("query_intent") or []),
+            "query_date": summary.get("query_date"),
+            "retrieved_count": int(
+                summary.get("retrieved_count")
+                if summary.get("retrieved_count") is not None
+                else summary.get("candidate_count") or 0
+            ),
+            "passed_count": int(summary.get("passed_count") or 0),
+            "topic_mismatch_count": int(summary.get("topic_mismatch_count") or 0),
+            "normalized_document_candidate_count": int(
+                summary.get("normalized_document_candidate_count") or 0
+            ),
+            "raw_candidate_count": int(summary.get("raw_candidate_count") or 0),
         }
 
     # ------------------------------------------------------------------

@@ -344,6 +344,12 @@ class TestFormatter:
         assert "answer_mode" not in text
         # legacy 헤딩 ``*답변*`` 도 더 이상 노출되지 않는다.
         assert "*답변*" not in text
+        # MVP 2차 Step 1: 기본 출력에는 retrieval diagnostics 라벨이
+        # 노출되지 않아야 한다 (--debug 또는 SLACK_SHOW_DIAGNOSTICS 일 때만 노출).
+        assert "query_topic" not in text
+        assert "retrieved_count" not in text
+        assert "topic_mismatch_count" not in text
+        assert "참고 근거 (debug)" not in text
 
     def test_format_qa_result_handles_empty_answer(self) -> None:
         result = _ok_qa_result()
@@ -545,6 +551,44 @@ class TestFormatQaResultWithRealisticAnswer:
         # debug source 요약이 노출.
         assert "참고 근거 (debug)" in text
         assert "kakao_guide.md" in text
+
+    def test_debug_mode_shows_step1_retrieval_diagnostics(self) -> None:
+        """
+        MVP 2차 Step 1: --debug 모드에서 query_topic 등 retrieval diagnostics 가
+        노출되어야 한다. diagnostics dict 에 신규 필드가 들어오면 진단 블록에
+        ``query_topic`` 라벨이 등장한다.
+        """
+        result = _qa_result_with_full_sections()
+        # diagnostics 에 step1 신규 필드 추가 (qa_adapter 가 채워주는 값과 동일 shape).
+        result["diagnostics"].update({
+            "query_topic": "kakao",
+            "query_intent": ["procedure"],
+            "query_date": None,
+            "retrieved_count": 7,
+            "passed_count": 3,
+            "topic_mismatch_count": 2,
+            "normalized_document_candidate_count": 1,
+            "raw_candidate_count": 6,
+        })
+        # sources 한 항목에도 진단 필드를 채워 둔다.
+        result["sources"]["primary_normalized_documents"][0].update({
+            "file_name": "kakao_guide.md",
+            "content_type": "knowledge_card",
+            "primary_topic": "kakao",
+            "retrieval_role": "primary_card",
+            "final_score": 0.789,
+        })
+
+        text = formatter.format_qa_result(result, debug=True)
+        # 진단 블록 신규 라벨
+        assert "query_topic" in text
+        assert "`kakao`" in text
+        assert "retrieved_count: 7" in text
+        assert "passed_count: 3" in text
+        assert "topic_mismatch_count: 2" in text
+        # source 진단 라인 — content_type / primary_topic / role / final
+        assert "role=`primary_card`" in text or "primary_card" in text
+        assert "final=`0.789`" in text
 
     def test_show_sources_option_enables_full_block(self) -> None:
         text = formatter.format_qa_result(
