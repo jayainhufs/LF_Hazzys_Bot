@@ -539,6 +539,11 @@ def _format_diagnostics(
     if mismatch:
         lines.append(f"• topic_mismatch_count: {mismatch}")
 
+    # MVP 2차 Step 2: topic-aware 격하 진단 — 발생했을 때만 노출.
+    demoted = int(diagnostics.get("topic_mismatch_demoted_count") or 0)
+    if demoted:
+        lines.append(f"• topic_mismatch_demoted_count: {demoted}")
+
     lines.append(f"• primary_normalized_document_count: {primary_count}")
     lines.append(f"• raw_evidence_count: {raw_evidence_count}")
     lines.append(f"• raw_fallback_count: {raw_fallback_count}")

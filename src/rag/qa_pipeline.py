@@ -104,6 +104,8 @@ class QAPipeline:
                 "topic_mismatch_count": 0,
                 "normalized_document_candidate_count": 0,
                 "raw_candidate_count": 0,
+                # MVP 2차 Step 2: topic-aware 격하 진단
+                "topic_mismatch_demoted_count": 0,
             }
 
         # 1) 정제
@@ -250,6 +252,10 @@ class QAPipeline:
                     "normalized_document_candidate_count"
                 ),
                 "raw_candidate_count": summary.get("raw_candidate_count"),
+                # MVP 2차 Step 2: topic-aware 격하 진단
+                "topic_mismatch_demoted_count": summary.get(
+                    "topic_mismatch_demoted_count"
+                ),
                 # Task 7: Normalized Document 중심 답변 진단
                 "answer_mode": answer_mode,
                 "answer_format_label": answer_format_label,
@@ -337,6 +343,10 @@ class QAPipeline:
                 summary.get("normalized_document_candidate_count") or 0
             ),
             "raw_candidate_count": int(summary.get("raw_candidate_count") or 0),
+            # MVP 2차 Step 2: topic-aware 격하 진단
+            "topic_mismatch_demoted_count": int(
+                summary.get("topic_mismatch_demoted_count") or 0
+            ),
         }
 
     # ------------------------------------------------------------------

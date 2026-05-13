@@ -147,6 +147,8 @@ def _serialize_chunks(chunks: List[RetrievedChunk]) -> List[Dict[str, Any]]:
                 ),
                 "topic_boost": md.get("topic_boost"),
                 "date_boost": md.get("date_boost"),
+                # MVP 2차 Step 2: topic-aware 격하 여부
+                "topic_mismatch_demoted": bool(md.get("topic_mismatch_demoted")),
             }
         )
     return out
@@ -284,6 +286,12 @@ def answer_slack_question(
         "raw_candidate_count": int(
             raw.get("raw_candidate_count")
             or retrieval_summary.get("raw_candidate_count")
+            or 0
+        ),
+        # MVP 2차 Step 2: topic-aware 격하 진단
+        "topic_mismatch_demoted_count": int(
+            raw.get("topic_mismatch_demoted_count")
+            or retrieval_summary.get("topic_mismatch_demoted_count")
             or 0
         ),
     }

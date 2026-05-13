@@ -164,6 +164,10 @@ class Retriever:
             "topic_mismatch_count": 0,
             "normalized_document_candidate_count": 0,
             "raw_candidate_count": 0,
+            # MVP 2차 Step 2: topic-aware 격하 진단.
+            # apply_normalized_document_priority 가 명확한 topic mismatch chunk 를
+            # primary_card 로 승격하지 않고 raw_fallback 으로 격하한 건수.
+            "topic_mismatch_demoted_count": 0,
             # Normalized Document 우선 retrieval 진단 (Task 6)
             # 신규 표준 키
             "prioritize_normalized_documents": bool(settings.prioritize_knowledge_cards),
@@ -306,6 +310,8 @@ class Retriever:
         nd_candidate_count = 0
         raw_candidate_count = 0
         topic_mismatch_count = 0
+        # MVP 2차 Step 2: topic-aware 격하 건수
+        topic_mismatch_demoted_count = 0
         for c in ranked:
             md = c.metadata or {}
             if is_normalized_document_chunk(c):
@@ -314,6 +320,8 @@ class Retriever:
                 raw_candidate_count += 1
             if md.get("topic_match") == "mismatch":
                 topic_mismatch_count += 1
+            if md.get("topic_mismatch_demoted"):
+                topic_mismatch_demoted_count += 1
 
         # 8) 결과 패킹
         details.candidates = ranked
@@ -327,6 +335,8 @@ class Retriever:
         details.summary["topic_mismatch_count"] = topic_mismatch_count
         details.summary["normalized_document_candidate_count"] = nd_candidate_count
         details.summary["raw_candidate_count"] = raw_candidate_count
+        # MVP 2차 Step 2: topic-aware 격하 건수
+        details.summary["topic_mismatch_demoted_count"] = topic_mismatch_demoted_count
         # 신규 표준 키
         details.summary["normalized_document_count"] = kc_count
         # legacy 호환 키

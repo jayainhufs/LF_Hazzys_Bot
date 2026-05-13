@@ -157,21 +157,38 @@
 
 - 질문 topic 과 다른 topic 의 chunk 가 답변에 섞이지 않도록 한다.
 
-**예상 작업**
+**구현 내용**
 
-- `query_topic` 과 chunk `primary_topic` 비교 강화
-- topic mismatch penalty 강화
-- `query_topic` 이 명확한 경우 mismatch chunk 를 primary 근거에서 제외
-- common / general topic 은 보조 근거로만 허용하는 정책 검토
+- `_GENERIC_TOPICS` 상수 도입 (`common`, `general`, `shared`, `etc`, `unknown` 등).
+- `_topic_match_factor` 라벨 확장.
+  - `match` / `mismatch` / `none` 외에 `neutral` 추가.
+  - chunk 가 generic topic 만 가지면 `neutral` 로 분류 → mismatch penalty 미적용.
+- `is_clear_topic_mismatch` helper 추가.
+  - query topic 이 명확하고, chunk 가 명확한 다른 topic 만 가질 때만 True.
+  - generic 또는 빈 topic 은 mismatch 로 보지 않음.
+- `apply_normalized_document_priority` 강화.
+  - 명확한 topic mismatch normalized document chunk 는
+    `retrieval_role="primary_card"` 로 승격하지 않고 `raw_fallback` 으로 격하.
+  - 격하 시 `knowledge_card_boost` / `card_type_boost` 미적용 (`1.0`).
+  - 같은 source_file 의 raw chunk 라도 mismatch 면 `raw_evidence` 승격 X.
+  - 모든 격하 chunk 는 metadata 에 `topic_mismatch_demoted=True` 가 기록됨.
+- `split_chunks_by_retrieval_role` 정렬 우선순위 정정.
+  - `retrieval_role` 라벨이 있으면 `content_type` 보다 우선.
+  - 격하된 normalized document chunk 가 `primary_cards` 그룹으로 다시 끌려가지 않도록 보장.
+- 진단 카운트 추가.
+  - `topic_mismatch_demoted_count` 를 retriever summary / qa_pipeline 결과 /
+    Slack diagnostics 에 노출 (`--debug` 모드에서 0 이 아닐 때만 표시).
+- 기존 `topic_mismatch_penalty=0.80` 환경변수는 그대로 사용 (새 env 추가 없음).
 
 **주의**
 
 - penalty 를 무작정 세게 걸지 말고, Step 1 에서 추가한 diagnostics 를 보고 테스트 기반으로 조정한다.
 - topic_mismatch_penalty 값 변경 시 기존 테스트 (`tests/test_date_topic_retrieval.py`, `tests/test_knowledge_card_retrieval.py`) 의 boost / penalty 관련 단위 테스트가 깨지지 않도록 한다.
+- raw_fallback 자체의 사용 한도 / `insufficient_evidence` 판단은 Step 4 로 미룬다.
 
 **현재 상태**
 
-- 미시작.
+- ✅ 완료됨.
 
 ---
 
@@ -334,4 +351,5 @@
 - ✅ Slack QA Bot 연결 완료
 - ✅ Slack 기본 출력 간결화 완료
 - ✅ MVP 2차 Step 1 — Retrieval Diagnostics 강화 완료
-- ⏭️ 다음 예정 Step 은 사용자의 추가 요구사항 반영 후 **Step 2 — Topic-aware Retrieval / Penalty 강화**
+- ✅ MVP 2차 Step 2 — Topic-aware Retrieval / Penalty 강화 완료
+- ⏭️ 다음 예정 Step 은 **Step 3 — Normalized Document 우선순위 점검**

@@ -82,6 +82,41 @@ _SETTING_KW = (
 _KAKAO_KW = ("카카오톡", "카카오 메시지", "카카오메시지", "카카오 발송", "발송",)
 
 
+# ---------------------------------------------------------------------------
+# Generic / common topic 라벨
+# ---------------------------------------------------------------------------
+# MVP 2차 Step 2 (Topic-aware Retrieval / Penalty 강화):
+# chunk metadata 의 ``primary_topic`` / ``topic_tags`` 에 들어올 수 있는
+# "generic / common / unknown" 류 라벨. 이런 chunk 는 query_topic 과
+# 명확히 다른 topic 으로 보지 않고 neutral (mismatch 가 아님) 로 처리한다.
+#
+# 예:
+#   query_topic="meta"
+#   chunk topic="common"  → mismatch 아님 (neutral)
+#   chunk topic="kakao"   → mismatch (명확히 다른 명확한 topic)
+#
+# 환경변수로 빼지 않고 코드 상수로 둔다 — 이번 Step 은 새 env 를 만들지 않고
+# 기존 ``topic_mismatch_penalty`` 를 활용하는 정책.
+_GENERIC_TOPICS: frozenset = frozenset({
+    "common",
+    "general",
+    "shared",
+    "misc",
+    "etc",
+    "none",
+    "unknown",
+    "공통",
+    "기타",
+})
+
+
+def _is_generic_topic(topic: Optional[str]) -> bool:
+    """topic 문자열이 generic / common / unknown 류면 True."""
+    if not topic:
+        return True
+    return str(topic).strip().lower() in _GENERIC_TOPICS
+
+
 # Topic 키워드 (slack_manual_parser._TOPIC_KEYWORDS 와 정합)
 _QUERY_TOPIC_KEYWORDS: Dict[str, Tuple[str, ...]] = {
     "meta": (
@@ -312,8 +347,14 @@ def _topic_match_factor(
 
     label:
       - "match"    : 1개 이상 겹침
-      - "mismatch" : 둘 다 있는데 안 겹침
+      - "mismatch" : 둘 다 명확한 topic 인데 안 겹침 (강한 mismatch)
+      - "neutral"  : chunk 가 common/general 같은 generic topic 만 가짐
+                     (mismatch 가 아니라 보조 근거로 허용)
       - "none"     : query_topics 가 비어 있거나 chunk_topics 가 비어 있어 비교 불가
+
+    MVP 2차 Step 2 (Topic-aware Retrieval / Penalty 강화):
+    chunk_topics 가 "common" / "general" 같은 generic 라벨만 가질 경우,
+    이를 명확한 mismatch 로 간주하지 않고 neutral 로 처리한다.
     """
     if not query_topics:
         return 1.0, "none"
@@ -324,11 +365,65 @@ def _topic_match_factor(
             return 0.95, "none"
         weak = penalty + (1.0 - penalty) * 0.5
         return weak, "none"
-    overlap = set(t.lower() for t in chunk_topics) & set(t.lower() for t in query_topics)
+    chunk_lower = [str(t).strip().lower() for t in chunk_topics if t]
+    query_lower = {str(t).strip().lower() for t in query_topics if t}
+    overlap = set(chunk_lower) & query_lower
     if overlap:
         return float(boost), "match"
-    # 둘 다 있는데 겹치지 않음 → 강한 페널티
+    # MVP 2차 Step 2: chunk 가 generic topic (common/general/etc) 만 가지면
+    # mismatch 가 아니라 neutral 로 분류. 페널티 미적용.
+    non_generic = [t for t in chunk_lower if t not in _GENERIC_TOPICS]
+    if not non_generic:
+        return 1.0, "neutral"
+    # 둘 다 명확한 topic 인데 겹치지 않음 → 강한 페널티
     return float(penalty), "mismatch"
+
+
+# ---------------------------------------------------------------------------
+# Topic mismatch 판정 helper (MVP 2차 Step 2)
+# ---------------------------------------------------------------------------
+def is_clear_topic_mismatch(
+    chunk_or_meta: Any,
+    query_topics: Optional[List[str]] = None,
+    query_metadata: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """
+    chunk 가 query_topic 과 **명확하게** 다른 topic 을 가지는지 판정.
+
+    - query_topics 가 비어 있으면 False (판정 불가 / penalty 미적용)
+    - chunk topic 정보가 없으면 False (neutral)
+    - chunk topic 이 generic / common / unknown 라벨만 있으면 False (neutral)
+    - chunk 가 명확한 topic 을 가지고 query topic 과 겹치지 않으면 True
+
+    동작은 ``_topic_match_factor`` 의 "mismatch" 판정과 정합한다.
+    """
+    if query_topics is None and query_metadata is not None:
+        query_topics = list(query_metadata.get("query_topics") or [])
+    if not query_topics:
+        return False
+
+    # chunk 의 topic 정보 추출
+    if isinstance(chunk_or_meta, dict):
+        md = chunk_or_meta
+    else:
+        md = getattr(chunk_or_meta, "metadata", {}) or {}
+    raw_topics = md.get("topic_tags") or []
+    if not isinstance(raw_topics, list):
+        raw_topics = []
+    # primary_topic 도 함께 보조로 인정 (topic_tags 가 비어있는 색인 데이터 호환)
+    primary_topic = md.get("primary_topic")
+    if primary_topic and primary_topic not in raw_topics:
+        raw_topics = list(raw_topics) + [primary_topic]
+
+    chunk_lower = [str(t).strip().lower() for t in raw_topics if t]
+    if not chunk_lower:
+        return False
+    non_generic = [t for t in chunk_lower if t not in _GENERIC_TOPICS]
+    if not non_generic:
+        return False
+    query_lower = {str(t).strip().lower() for t in query_topics if t}
+    overlap = set(non_generic) & query_lower
+    return not bool(overlap)
 
 
 def _content_type_boost(content_type: str, source_type: str) -> float:
@@ -707,6 +802,17 @@ def apply_normalized_document_priority(
     - normalized_document_type / card_type 둘 다 인식 (신규 우선, legacy fallback).
     - 진단 필드는 신규 / legacy 키를 모두 채워, 기존 UI 와의 호환을 유지한다.
 
+    MVP 2차 Step 2 (Topic-aware Retrieval / Penalty 강화):
+    - query_topics 가 명확하고, normalized document chunk 의 topic 이 명확하게
+      다른 명확한 topic (예: 질문 meta, chunk kakao) 이면
+      ``retrieval_role`` 을 "primary_card" 로 승격하지 않고 "raw_fallback" 으로
+      격하한다 (kc_boost / card_type_boost 도 적용하지 않음).
+    - 격하 사실은 metadata 의 ``topic_mismatch_demoted=True`` 로 기록한다.
+    - 같은 source_file 의 raw chunk 도 명확한 mismatch 면 raw_evidence 승격을
+      막고 raw_fallback 으로 둔다 (raw_evidence_boost 미적용).
+    - query_topics 가 비어 있거나 chunk topic 이 generic (common / general / etc)
+      이면 mismatch 로 보지 않는다 — 기존 동작 유지.
+
     candidates 는 final_score 내림차순으로 재정렬되어 반환된다.
     """
     if not candidates:
@@ -719,6 +825,7 @@ def apply_normalized_document_priority(
 
     qm = query_metadata or {}
     query_intent = list(qm.get("query_intent") or [])
+    query_topics = list(qm.get("query_topics") or [])
 
     normalized_keys = _normalized_file_keys(candidates) if enabled else set()
 
@@ -737,13 +844,33 @@ def apply_normalized_document_priority(
             md.setdefault("knowledge_card_boost", 1.0)
             md.setdefault("card_type_boost", 1.0)
             md.setdefault("card_type_match", False)
+            md.setdefault("topic_mismatch_demoted", False)
             if is_kc:
                 md.setdefault("retrieval_role", "primary_card")
             else:
                 md.setdefault("retrieval_role", "raw_fallback")
             continue
 
+        # MVP 2차 Step 2: query_topic 과 chunk topic 이 명확하게 mismatch 인지 판정.
+        # 정책상 generic topic (common/general/etc) 은 mismatch 로 보지 않는다.
+        topic_mismatch = is_clear_topic_mismatch(c, query_topics=query_topics)
+        md["topic_mismatch_demoted"] = bool(topic_mismatch)
+
         if is_kc:
+            if topic_mismatch:
+                # 명확한 topic mismatch 인 normalized document chunk 는
+                # primary_card 로 승격하지 않는다. kc_boost / type_boost 도 미적용.
+                # final_score 자체는 rerank_simple 에서 이미 topic_mismatch_penalty 가
+                # 곱해진 상태이므로 그대로 둔다.
+                md["normalized_document_boost"] = 1.0
+                md["normalized_document_type_boost"] = 1.0
+                md["normalized_document_type_match"] = False
+                md["knowledge_card_boost"] = 1.0
+                md["card_type_boost"] = 1.0
+                md["card_type_match"] = False
+                md["retrieval_role"] = "raw_fallback"
+                continue
+            # 기존 동작: primary_card 승격 + boost 적용
             doc_type = _resolve_normalized_document_type(md)
             ct_boost, intent_match = normalized_document_type_boost_for(
                 doc_type, query_intent, settings_obj=s
@@ -764,7 +891,12 @@ def apply_normalized_document_priority(
             md["knowledge_card_boost"] = 1.0
             md["card_type_boost"] = 1.0
             md["card_type_match"] = False
-            if _chunk_belongs_to_normalized_file(c, normalized_keys):
+            # 같은 source_file 의 raw chunk 라도 명확히 topic mismatch 면
+            # raw_evidence 승격은 막고 raw_fallback 으로 둔다 (boost 미적용).
+            if (
+                _chunk_belongs_to_normalized_file(c, normalized_keys)
+                and not topic_mismatch
+            ):
                 c.final_score = float(c.final_score or 0.0) * raw_evidence_boost
                 md["retrieval_role"] = "raw_evidence"
                 md["raw_evidence_boost"] = round(raw_evidence_boost, 6)

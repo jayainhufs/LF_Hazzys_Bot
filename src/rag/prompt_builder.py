@@ -471,15 +471,28 @@ def split_chunks_by_retrieval_role(
         role = (md.get("retrieval_role") or "").lower()
         ctype = (c.content_type or "").lower()
         stype = (c.source_type or "").lower()
+
+        # 1) retrieval_role 이 명시되어 있으면 그 라벨을 우선한다.
+        #    MVP 2차 Step 2 (Topic-aware Retrieval / Penalty 강화): topic mismatch
+        #    로 격하된 normalized document chunk 는 retrieval_role="raw_fallback"
+        #    이므로, content_type 으로 다시 primary_cards 로 끌어올리면 안 된다.
+        if role == "primary_card":
+            primary.append(c)
+            continue
+        if role == "raw_evidence":
+            raw_ev.append(c)
+            continue
+        if role == "raw_fallback":
+            raw_fb.append(c)
+            continue
+
+        # 2) retrieval_role 이 비어 있는 legacy / 호환 케이스만 content_type 으로 추정.
         is_card = (
-            role == "primary_card"
-            or ctype in {"normalized_document", "knowledge_card"}
+            ctype in {"normalized_document", "knowledge_card"}
             or stype == "llm_normalized"
         )
         if is_card:
             primary.append(c)
-        elif role == "raw_evidence":
-            raw_ev.append(c)
         else:
             raw_fb.append(c)
     return {
