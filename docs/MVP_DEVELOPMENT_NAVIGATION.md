@@ -318,17 +318,60 @@
 **목표**
 
 - Slack `--debug` 에서 검색 실패 원인을 더 쉽게 파악한다.
+- Step 1~4 에서 늘어난 diagnostics 를 Slack thread 에서 운영자가 빠르게 읽을 수 있도록 구조화한다.
+- 기본 Slack 출력은 계속 간결하게 유지하고, debug 모드에서만 진단을 노출한다.
 
-**예상 작업**
+**구현 내용**
 
-- top source 3개 진단 표시
-- `query_topic`, `topic_mismatch_count`, candidate counts, `retrieval_role` 표시
-- raw 원문은 길게 노출하지 않음 (preview 한정)
+- `src/slack_bot/formatter.py` 의 debug 출력 구조를 아래 섹션으로 정리.
+  - `*진단 요약*`
+    - `evidence_strength`
+    - `answer_mode`
+    - `query_topic`
+    - `weak_evidence_warning`
+    - `raw_fallback_only` / `raw_fallback_only_reason` (해당 시)
+  - `*검색 후보*`
+    - `retrieved` / `passed`
+    - `normalized_document_candidate` / `raw_candidate`
+    - `primary_normalized_document`
+    - `raw_evidence` / `raw_fallback`
+  - `*Topic 진단*`
+    - `topic_mismatch_count`
+    - `topic_mismatch_demoted_count`
+    - `raw_fallback_topic_mismatch: count / raw_fallback_count (ratio=...)`
+    - `query_intent` / `query_date` (있을 때)
+  - `*Top Sources*`
+    - 최대 3개 source 만 표시.
+    - `file_name / section_title` 형태의 제목.
+    - `content_type`, `primary_topic`, `role`, `final_score`, `topic_match`,
+      `topic_mismatch_demoted` 를 source 별로 표시.
+    - `final_score` 는 소수점 3자리로 표시.
+    - preview 는 120자 이하로 제한.
+- debug helper 분리.
+  - `_format_debug_summary`
+  - `_format_debug_candidate_counts`
+  - `_format_debug_topic_diagnostics`
+  - `_format_sources_debug`
+  - `_format_source_debug_fields`
+- Step 4 의 weak evidence 상태를 debug 요약에서 명확히 표시.
+  - `evidence_strength` 는 항상 표시.
+  - `weak_evidence_warning` 은 True/False 를 항상 표시.
+  - `raw_fallback_only=True` 인 경우 reason 과 함께 표시.
+- Slack 기본 출력은 변경하지 않음.
+  - 질문에 `--debug` 가 없으면 답변 본문만 노출.
+  - 참고 근거 / 진단 / raw preview 숨김 유지.
+- `tests/test_slack_bot.py` 에 Step 5 구조화 테스트 추가.
+  - `진단 요약`, `검색 후보`, `Topic 진단`, `Top Sources` 섹션 표시.
+  - weak evidence 필드 표시.
+  - Top Sources 최대 3개 제한.
+  - score 소수점 3자리 표시.
+  - 긴 preview 제한.
+  - 기본 출력 debug 섹션 미노출.
+- 기존 Step 1~4 회귀 테스트 기대값을 새 debug 구조에 맞게 갱신.
 
 **현재 상태**
 
-- Step 1 에서 일부 구현됨.
-- 이후 Step 2~4 결과에 맞춰 추가 개선 가능.
+- ✅ 완료됨.
 
 ---
 
@@ -428,4 +471,5 @@
 - ✅ MVP 2차 Step 2 — Topic-aware Retrieval / Penalty 강화 완료
 - ✅ MVP 2차 Step 3 — Normalized Document 우선순위 점검 완료
 - ✅ MVP 2차 Step 4 — Raw Fallback 오남용 방지 완료
-- ⏭️ 다음 예정 Step 은 **Step 5 — Slack Debug 진단 강화**
+- ✅ MVP 2차 Step 5 — Slack Debug 진단 강화 완료
+- ⏭️ 다음 예정 Step 은 **Step 6 — Hybrid Retrieval / BM25 도입**

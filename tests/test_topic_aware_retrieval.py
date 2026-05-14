@@ -661,18 +661,18 @@ def _slack_result(*, demoted_count: int) -> Dict[str, Any]:
 
 def test_slack_debug_shows_topic_mismatch_demoted_count():
     text = formatter.format_qa_result(_slack_result(demoted_count=1), debug=True)
-    assert "*진단*" in text
+    assert "*진단 요약*" in text
     assert "topic_mismatch_demoted_count: 1" in text
     # 기존 step1 진단 라벨은 그대로 유지
     assert "query_topic" in text
     assert "`meta`" in text
-    assert "retrieved_count: 5" in text
+    assert "retrieved: 5" in text
 
 
 def test_slack_debug_omits_demote_line_when_count_is_zero():
     text = formatter.format_qa_result(_slack_result(demoted_count=0), debug=True)
-    # demoted_count = 0 일 때는 라인이 나오지 않아야 한다 (debug noise 최소화).
-    assert "topic_mismatch_demoted_count" not in text
+    # Step 5 구조화 이후 Topic 진단 섹션에서는 0도 명시적으로 표시한다.
+    assert "topic_mismatch_demoted_count: 0" in text
     # 다른 진단 라벨은 여전히 표시
     assert "query_topic" in text
 
@@ -681,5 +681,5 @@ def test_slack_default_output_hides_topic_mismatch_demoted_count():
     text = formatter.format_qa_result(_slack_result(demoted_count=1))
     # 기본 출력은 답변만 — 진단 라벨이 나오면 안 된다.
     assert "topic_mismatch_demoted_count" not in text
-    assert "*진단*" not in text
-    assert "참고 근거 (debug)" not in text
+    assert "*진단 요약*" not in text
+    assert "*Top Sources*" not in text

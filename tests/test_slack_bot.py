@@ -340,7 +340,7 @@ class TestFormatter:
         assert "*참고 근거*" not in text
         assert "Normalized Document" not in text
         assert "Raw Evidence" not in text
-        assert "*진단*" not in text
+        assert "*진단 요약*" not in text
         assert "answer_mode" not in text
         # legacy 헤딩 ``*답변*`` 도 더 이상 노출되지 않는다.
         assert "*답변*" not in text
@@ -349,7 +349,7 @@ class TestFormatter:
         assert "query_topic" not in text
         assert "retrieved_count" not in text
         assert "topic_mismatch_count" not in text
-        assert "참고 근거 (debug)" not in text
+        assert "*Top Sources*" not in text
 
     def test_format_qa_result_handles_empty_answer(self) -> None:
         result = _ok_qa_result()
@@ -533,7 +533,7 @@ class TestFormatQaResultWithRealisticAnswer:
         # markdown heading 표식은 남아있지 않다.
         assert "## " not in text
         # 기본은 진단 블록도 미표시.
-        assert "*진단*" not in text
+        assert "*진단 요약*" not in text
         assert "answer_mode" not in text
 
     def test_debug_mode_shows_diagnostics_and_short_sources(self) -> None:
@@ -545,11 +545,12 @@ class TestFormatQaResultWithRealisticAnswer:
         assert "*1. 결론*" in text
         assert "## 6. 참고 근거" not in text
         # debug 에서는 진단이 표시.
-        assert "*진단*" in text
+        assert "*진단 요약*" in text
         assert "answer_mode" in text
-        assert "primary_normalized_document_count: 1" in text
+        assert "*검색 후보*" in text
+        assert "primary_normalized_document: 1" in text
         # debug source 요약이 노출.
-        assert "참고 근거 (debug)" in text
+        assert "*Top Sources*" in text
         assert "kakao_guide.md" in text
 
     def test_debug_mode_shows_step1_retrieval_diagnostics(self) -> None:
@@ -583,12 +584,12 @@ class TestFormatQaResultWithRealisticAnswer:
         # 진단 블록 신규 라벨
         assert "query_topic" in text
         assert "`kakao`" in text
-        assert "retrieved_count: 7" in text
-        assert "passed_count: 3" in text
+        assert "retrieved: 7" in text
+        assert "passed: 3" in text
         assert "topic_mismatch_count: 2" in text
         # source 진단 라인 — content_type / primary_topic / role / final
         assert "role=`primary_card`" in text or "primary_card" in text
-        assert "final=`0.789`" in text
+        assert "final_score=`0.789`" in text
 
     def test_show_sources_option_enables_full_block(self) -> None:
         text = formatter.format_qa_result(
@@ -598,17 +599,131 @@ class TestFormatQaResultWithRealisticAnswer:
         assert "*참고 근거*" in text
         assert "Normalized Document" in text
         # show_diagnostics 는 켜지 않았으니 진단은 미표시.
-        assert "*진단*" not in text
+        assert "*진단 요약*" not in text
 
     def test_show_diagnostics_option_enables_only_diagnostics(self) -> None:
         text = formatter.format_qa_result(
             _qa_result_with_full_sections(),
             show_diagnostics=True,
         )
-        assert "*진단*" in text
+        assert "*진단 요약*" in text
         assert "answer_mode" in text
         # show_sources 는 켜지 않음.
         assert "*참고 근거*" not in text
+
+
+def _step5_debug_result() -> Dict[str, Any]:
+    """Step 5 Slack debug 구조화 테스트용 결과."""
+    long_preview = "가" * 240
+    sources = []
+    for idx in range(1, 5):
+        sources.append({
+            "label": f"source_{idx}.md · 섹션 {idx}",
+            "preview": long_preview,
+            "file_name": f"source_{idx}.md",
+            "section_title": f"섹션 {idx}",
+            "content_type": "normalized_document" if idx == 1 else "conversation",
+            "primary_topic": "meta" if idx == 1 else "kakao",
+            "retrieval_role": "primary_card" if idx == 1 else "raw_fallback",
+            "final_score": 0.812345 if idx == 1 else 0.421987,
+            "topic_match": "match" if idx == 1 else "mismatch",
+            "topic_mismatch_demoted": idx == 2,
+        })
+    return {
+        "answer": "## 1. 결론\n메타 피드광고 셋팅 절차 요약.\n",
+        "sources": {
+            "primary_normalized_documents": sources[:1],
+            "raw_evidence": [],
+            "raw_fallback": sources[1:],
+        },
+        "diagnostics": {
+            "answer_mode": "raw_fallback",
+            "evidence_strength": "weak",
+            "query_topic": "meta",
+            "query_intent": ["procedure"],
+            "retrieved_count": 8,
+            "passed_count": 3,
+            "normalized_document_candidate_count": 2,
+            "raw_candidate_count": 6,
+            "primary_normalized_document_count": 1,
+            "raw_evidence_count": 0,
+            "raw_fallback_count": 3,
+            "topic_mismatch_count": 2,
+            "topic_mismatch_demoted_count": 1,
+            "raw_fallback_only": True,
+            "raw_fallback_only_reason": "no_primary_normalized_document",
+            "raw_fallback_topic_mismatch_count": 2,
+            "raw_fallback_topic_mismatch_ratio": 0.666667,
+            "weak_evidence_warning": True,
+            "generation_skipped": False,
+            "model_name": "fake-model",
+        },
+        "answer_mode": "raw_fallback",
+        "primary_normalized_document_count": 1,
+        "raw_evidence_count": 0,
+        "raw_fallback_count": 3,
+    }
+
+
+class TestStep5SlackDebugStructure:
+    def test_debug_output_has_structured_sections(self) -> None:
+        text = formatter.format_qa_result(_step5_debug_result(), debug=True)
+
+        assert "*진단 요약*" in text
+        assert "*검색 후보*" in text
+        assert "*Topic 진단*" in text
+        assert "*Top Sources*" in text
+
+    def test_debug_summary_shows_weak_evidence_fields(self) -> None:
+        text = formatter.format_qa_result(_step5_debug_result(), debug=True)
+
+        assert "evidence_strength: `weak`" in text
+        assert "answer_mode: `raw_fallback`" in text
+        assert "query_topic: `meta`" in text
+        assert "weak_evidence_warning: `True`" in text
+        assert "raw_fallback_only: `True`" in text
+        assert "reason=`no_primary_normalized_document`" in text
+
+    def test_debug_candidate_and_topic_sections_are_readable(self) -> None:
+        text = formatter.format_qa_result(_step5_debug_result(), debug=True)
+
+        assert "retrieved: 8 · passed: 3" in text
+        assert "normalized_document_candidate: 2 · raw_candidate: 6" in text
+        assert "primary_normalized_document: 1" in text
+        assert "raw_evidence: 0 · raw_fallback: 3" in text
+        assert "topic_mismatch_count: 2" in text
+        assert "topic_mismatch_demoted_count: 1" in text
+        assert "raw_fallback_topic_mismatch: 2 / 3 (ratio=0.67)" in text
+
+    def test_top_sources_are_limited_and_scores_are_rounded(self) -> None:
+        text = formatter.format_qa_result(_step5_debug_result(), debug=True)
+
+        assert "1. source_1.md / 섹션 1" in text
+        assert "2. source_2.md / 섹션 2" in text
+        assert "3. source_3.md / 섹션 3" in text
+        assert "source_4.md / 섹션 4" not in text
+        assert "• …외 1건" in text
+        assert "final_score=`0.812`" in text
+        assert "final_score=`0.422`" in text
+        assert "topic_match=`match`" in text
+        assert "topic_mismatch_demoted=`True`" in text
+
+    def test_source_preview_is_clipped_in_debug_output(self) -> None:
+        text = formatter.format_qa_result(_step5_debug_result(), debug=True)
+
+        # 원본 preview 는 240자지만 debug 출력에서는 120자 이하 + 생략부호로 제한된다.
+        assert "가" * 180 not in text
+        assert "가" * 120 not in text
+        assert "…" in text
+
+    def test_default_output_hides_all_debug_sections(self) -> None:
+        text = formatter.format_qa_result(_step5_debug_result())
+
+        assert "*진단 요약*" not in text
+        assert "*검색 후보*" not in text
+        assert "*Topic 진단*" not in text
+        assert "*Top Sources*" not in text
+        assert "evidence_strength" not in text
 
 
 # ---------------------------------------------------------------------------
@@ -648,7 +763,7 @@ class TestHandlerEndToEndWithMockAdapter:
         assert "세팅 전에는 가이드" in kw["text"]
         assert "*답변*" not in kw["text"]
         assert "*참고 근거*" not in kw["text"]
-        assert "*진단*" not in kw["text"]
+        assert "*진단 요약*" not in kw["text"]
         # 진단 dict 반환
         assert out["responded"] is True
         assert out.get("debug") is False
@@ -726,9 +841,9 @@ class TestHandlerEndToEndWithMockAdapter:
         # Slack 메시지에는 진단 정보와 짧은 source 요약이 포함된다.
         text = post.calls[0]["text"]
         assert "*1. 결론*" in text
-        assert "*진단*" in text
+        assert "*진단 요약*" in text
         assert "answer_mode" in text
-        assert "참고 근거 (debug)" in text
+        assert "*Top Sources*" in text
         # 본문의 6/7번 섹션은 여전히 잘려나가야 한다.
         assert "## 6. 참고 근거" not in text
         assert "## 7. 불확실한 부분" not in text

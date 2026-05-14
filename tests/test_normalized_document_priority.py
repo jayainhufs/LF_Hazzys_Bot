@@ -740,12 +740,12 @@ def test_slack_debug_shows_primary_normalized_document_count():
     text = formatter.format_qa_result(result, debug=True)
 
     # Step 1 / Step 2 진단 모두 유지
-    assert "*진단*" in text
+    assert "*진단 요약*" in text
     assert "query_topic" in text
-    assert "primary_normalized_document_count" in text
+    assert "primary_normalized_document" in text
     assert "topic_mismatch_demoted_count" in text
     # primary normalized document 가 1건이라는 진단
-    assert "primary_normalized_document_count: 1" in text
+    assert "primary_normalized_document: 1" in text
 
 
 def test_slack_default_output_hides_primary_normalized_document_count():
@@ -756,5 +756,5 @@ def test_slack_default_output_hides_primary_normalized_document_count():
     text = formatter.format_qa_result(result)
     # 기본 출력은 답변만 — 진단 라벨이 나오면 안 된다.
     assert "primary_normalized_document_count" not in text
-    assert "*진단*" not in text
-    assert "참고 근거 (debug)" not in text
+    assert "*진단 요약*" not in text
+    assert "*Top Sources*" not in text

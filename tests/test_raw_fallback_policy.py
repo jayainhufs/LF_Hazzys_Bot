@@ -673,13 +673,13 @@ def test_slack_debug_shows_step4_diagnostics():
     )
     text = formatter.format_qa_result(out, debug=True)
     # debug 모드에서 신규 진단이 노출된다.
-    assert "*진단*" in text
+    assert "*진단 요약*" in text
     assert "evidence_strength" in text
     assert "`weak`" in text
     assert "raw_fallback_only" in text
     assert "weak_evidence_warning" in text
     # mismatch count 라인 노출 (count=2)
-    assert "raw_fallback_topic_mismatch_count: 2" in text
+    assert "raw_fallback_topic_mismatch: 2 / 3" in text
     # 기존 Step1/2 진단도 깨지지 않는다.
     assert "query_topic" in text
     assert "`meta`" in text
@@ -695,7 +695,7 @@ def test_slack_default_output_hides_step4_diagnostics():
     assert "evidence_strength" not in text
     assert "raw_fallback_only" not in text
     assert "weak_evidence_warning" not in text
-    assert "*진단*" not in text
+    assert "*진단 요약*" not in text
 
 
 def test_slack_debug_omits_warning_when_not_active():
@@ -715,11 +715,12 @@ def test_slack_debug_omits_warning_when_not_active():
         pipeline=_StubPipeline(base),
     )
     text = formatter.format_qa_result(out, debug=True)
-    # evidence_strength 는 항상 노출되지만 weak warning / raw_fallback_only 라인은 노출 X.
+    # evidence_strength 와 weak_evidence_warning 은 요약에서 항상 노출되고,
+    # raw_fallback_only / mismatch 상세 라인만 필요할 때 표시된다.
     assert "evidence_strength: `strong`" in text
-    assert "weak_evidence_warning" not in text
+    assert "weak_evidence_warning: `False`" in text
     assert "raw_fallback_only" not in text
-    assert "raw_fallback_topic_mismatch_count" not in text
+    assert "raw_fallback_topic_mismatch: 0 / 3" in text
 
 
 # ===========================================================================

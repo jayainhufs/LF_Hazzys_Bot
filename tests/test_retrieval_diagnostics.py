@@ -499,22 +499,22 @@ def test_formatter_debug_includes_query_topic_and_top_sources():
     assert "*1. 결론*" in text
 
     # 진단 블록에 신규 필드들이 노출되어야 한다.
-    assert "*진단*" in text
+    assert "*진단 요약*" in text
     assert "query_topic" in text
     assert "`meta`" in text
-    assert "retrieved_count: 8" in text
-    assert "passed_count: 3" in text
+    assert "retrieved: 8" in text
+    assert "passed: 3" in text
     assert "topic_mismatch_count: 1" in text
     assert "normalized_document=2" in text or "normalized_document_candidate" in text
     assert "raw=6" in text or "raw_candidate" in text
 
     # source 진단 라인 — top3 정도까지 표시되며 file_name / content_type /
     # primary_topic / retrieval_role / final_score 가 등장한다.
-    assert "참고 근거 (debug)" in text
+    assert "*Top Sources*" in text
     assert "meta_guide.md" in text
     assert "primary_card" in text
     # final_score 가 소수점 3자리로 표시.
-    assert "final=`0.812`" in text
+    assert "final_score=`0.812`" in text
 
 
 def test_formatter_default_output_has_no_diagnostics_labels():
@@ -523,14 +523,14 @@ def test_formatter_default_output_has_no_diagnostics_labels():
     # 답변 본문은 보인다.
     assert "*1. 결론*" in text
     # 진단 / source 진단 라인이 노출되면 안 된다.
-    assert "*진단*" not in text
+    assert "*진단 요약*" not in text
     assert "query_topic" not in text
     assert "retrieved_count" not in text
     assert "topic_mismatch_count" not in text
-    assert "참고 근거 (debug)" not in text
+    assert "*Top Sources*" not in text
     # source 진단 라인에서 사용한 라벨도 들어가면 안 된다.
     assert "primary_card" not in text
-    assert "final=`" not in text
+    assert "final_score=`" not in text
 
 
 # ---------------------------------------------------------------------------
