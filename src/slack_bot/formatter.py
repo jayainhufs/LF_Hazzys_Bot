@@ -507,6 +507,35 @@ def _format_diagnostics(
     mode = diagnostics.get("answer_mode") or answer_mode or "unknown"
     lines.append(f"• answer_mode: `{mode}`")
 
+    # ----- MVP 2차 Step 4: Raw Fallback 오남용 방지 진단 -----
+    # evidence_strength 는 가장 먼저 노출해 답변 신뢰도 한눈에 확인할 수 있게 한다.
+    evidence_strength = (diagnostics.get("evidence_strength") or "").strip()
+    if evidence_strength:
+        lines.append(f"• evidence_strength: `{evidence_strength}`")
+
+    if diagnostics.get("weak_evidence_warning"):
+        # weak_evidence_warning 이 True 일 때만 노출 (정상 케이스 잡음 최소화).
+        lines.append("• weak_evidence_warning: `True`")
+
+    if diagnostics.get("raw_fallback_only"):
+        reason = diagnostics.get("raw_fallback_only_reason")
+        if reason:
+            lines.append(
+                f"• raw_fallback_only: `True` · reason=`{reason}`"
+            )
+        else:
+            lines.append("• raw_fallback_only: `True`")
+
+    fb_mismatch = int(diagnostics.get("raw_fallback_topic_mismatch_count") or 0)
+    if fb_mismatch:
+        fb_ratio = float(
+            diagnostics.get("raw_fallback_topic_mismatch_ratio") or 0.0
+        )
+        lines.append(
+            "• raw_fallback_topic_mismatch_count: "
+            f"{fb_mismatch} (ratio={fb_ratio:.2f})"
+        )
+
     # ----- query 진단 -----
     query_topic = diagnostics.get("query_topic")
     if query_topic:

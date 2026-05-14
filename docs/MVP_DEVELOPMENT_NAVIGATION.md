@@ -236,20 +236,80 @@
 **목표**
 
 - raw fallback 은 마지막 수단으로만 사용되도록 한다.
+- raw_fallback 기반 답변의 신뢰도를 진단으로 명확히 표시한다.
+- raw_fallback 자체는 제거하지 않는다 (정규화되지 않은 초기 데이터 호환 유지).
 
-**예상 작업**
+**구현 내용**
 
-- `raw_fallback` 만 있는 경우 confidence 를 낮게 판단
-- topic mismatch raw chunk 는 fallback 에서도 감점
-- 근거가 부족하면 무리하게 답변하지 않고 `insufficient_evidence` 처리 고려
+- ``src/rag/qa_pipeline.py`` 에 ``_summarize_raw_fallback_policy`` helper 추가.
+  - qa_pipeline 결과 dict / log metadata 의 top-level 에 아래 진단 필드 노출.
+    - ``raw_fallback_only``
+    - ``raw_fallback_only_reason``
+      - ``"no_primary_normalized_document"`` : 후보 normalized document 는 있었으나 primary 로 승격되지 못함 (topic mismatch demote 등)
+      - ``"no_normalized_document_candidate"`` : normalized document 자체가 검색되지 않음
+    - ``raw_fallback_topic_mismatch_count``
+    - ``raw_fallback_topic_mismatch_ratio``
+      (분모는 topic 정보가 명확한 non-generic raw_fallback 수. generic / common /
+      unknown 만 가진 chunk 는 분모에 포함하지 않아 mismatch 강도가 희석되지 않게 한다.)
+    - ``primary_evidence_available``
+      (primary normalized document 가 있거나 raw_evidence 가 있을 때 True)
+    - ``normalized_document_available``
+      (retrieval candidate 단계에서 normalized document 가 하나라도 있었는지)
+    - ``weak_evidence_warning``
+    - ``evidence_strength`` ∈ {``strong``, ``medium``, ``weak``, ``insufficient``}
+- ``raw_fallback_only`` 판정 정책.
+  - ``primary_normalized_document_count == 0`` AND ``raw_fallback_count > 0`` 이면 True.
+  - raw_evidence 가 있어도 raw_fallback chunk 가 함께 있으면 raw_fallback_only 는 True 일 수 있다 — 이 경우 ``primary_evidence_available`` 로 raw_evidence 존재 여부를 별도 진단한다.
+- ``evidence_strength`` 분류 정책.
+  - ``generation_skipped`` → ``insufficient``
+  - primary Normalized Document 존재 → ``strong``
+  - raw_evidence 존재 → ``medium``
+  - raw_fallback 만 존재
+    - 모든 raw_fallback 이 topic match / generic 이고 mismatch_count == 0 → ``medium``
+    - mismatch ratio >= 0.7 → ``insufficient``
+    - 그 외 → ``weak``
+- ``weak_evidence_warning`` 정책 (보수적).
+  - ``raw_fallback_only == True``
+  - ``query_topic`` 명확함
+  - ``raw_fallback_count >= 2``
+  - ``raw_fallback_topic_mismatch_ratio >= 0.7``
+  - 위 4 조건을 모두 만족할 때만 True.
+- raw_fallback 의 ``topic_match`` 판정은 Step 2 helper ``is_clear_topic_mismatch`` 를 그대로 재사용.
+  - chunk topic 이 generic (common / general / unknown / etc) 만 있으면 mismatch 로 잡지 않는다.
+  - query topic 이 None 이면 mismatch warning 을 강하게 켜지 않는다.
+- ``answer_mode`` 라벨은 그대로 유지 (``knowledge_card`` / ``raw_fallback`` /
+  ``insufficient_evidence``). 신규 answer_mode 는 추가하지 않는다.
+- Slack ``--debug`` 출력 (``src/slack_bot/formatter.py``) 에 새 진단 라인 추가.
+  - ``evidence_strength`` (항상)
+  - ``weak_evidence_warning`` (True 일 때만)
+  - ``raw_fallback_only`` (True 일 때만, reason 포함)
+  - ``raw_fallback_topic_mismatch_count`` (>0 일 때만 ratio 와 함께)
+  - 기본 출력은 변경하지 않는다.
+- Slack adapter (``src/slack_bot/qa_adapter.py``) 가 신규 진단을 diagnostics
+  dict 에 그대로 전달한다.
+- Streamlit ``app/pages/3_업무_QA.py`` caption 에 ``evidence_strength`` /
+  ``raw_fallback_only`` / mismatch count / ratio / weak_evidence_warning 표시.
+  - weak_evidence_warning=True 일 때 ``st.warning`` 으로 약한 근거 안내 노출.
+- ``tests/test_raw_fallback_policy.py`` 신규 추가.
+  - evidence_strength 분류 (strong / medium / weak / insufficient).
+  - raw_fallback_only 판정 (primary 있을 때 / 없을 때 / common 만 있을 때).
+  - weak_evidence_warning 정책 (query_topic 없을 때 켜지지 않음, generic chunk 가
+    분모에 들어가도 정상 동작, mismatch ratio >= 0.7 일 때만 True).
+  - 시나리오 A: 메타 질문 + kakao×2 + common×1 raw_fallback → weak_evidence_warning=True.
+  - 시나리오 B: 메타 normalized + kakao raw_fallback → strong / warning=False.
+  - 시나리오 C: query_topic 불명확 + raw_fallback only → warning 과도 X.
+  - Slack adapter / formatter --debug 표시 통합 테스트.
+  - Step 1/2/3 진단 / answer_mode 호환성 회귀.
 
 **주의**
 
-- 답변 자체를 만들지 못하게 하기보다는, "근거가 약함" 을 답변과 진단에 명확히 표시하는 방향을 우선 고려한다.
+- 답변 자체를 막지 않는다 — "근거가 약함" 을 답변과 진단에 명확히 표시하는 방향을 우선했다.
+- 외부 ``answer_mode`` 라벨 (``knowledge_card`` / ``raw_fallback`` / ``insufficient_evidence``) 은 그대로 유지해 Streamlit / Slack / 기존 테스트와의 호환성을 깨지 않는다.
+- BM25 / Hybrid Retrieval / Contextual Chunking 은 이 Step 범위가 아니다 — Step 6 이후로 미룬다.
 
 **현재 상태**
 
-- 미시작.
+- ✅ 완료됨.
 
 ---
 
@@ -367,4 +427,5 @@
 - ✅ MVP 2차 Step 1 — Retrieval Diagnostics 강화 완료
 - ✅ MVP 2차 Step 2 — Topic-aware Retrieval / Penalty 강화 완료
 - ✅ MVP 2차 Step 3 — Normalized Document 우선순위 점검 완료
-- ⏭️ 다음 예정 Step 은 **Step 4 — Raw Fallback 오남용 방지**
+- ✅ MVP 2차 Step 4 — Raw Fallback 오남용 방지 완료
+- ⏭️ 다음 예정 Step 은 **Step 5 — Slack Debug 진단 강화**

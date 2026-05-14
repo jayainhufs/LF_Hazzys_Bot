@@ -294,6 +294,48 @@ def answer_slack_question(
             or retrieval_summary.get("topic_mismatch_demoted_count")
             or 0
         ),
+        # MVP 2차 Step 4: Raw Fallback 오남용 방지 진단
+        # qa_pipeline top-level 의 값을 그대로 전달한다. 누락된 필드는 안전한
+        # default (False / 0 / None / "insufficient") 로 채운다.
+        "evidence_strength": str(
+            raw.get("evidence_strength")
+            or retrieval_summary.get("evidence_strength")
+            or "insufficient"
+        ),
+        "raw_fallback_only": bool(
+            raw.get("raw_fallback_only")
+            if raw.get("raw_fallback_only") is not None
+            else retrieval_summary.get("raw_fallback_only", False)
+        ),
+        "raw_fallback_only_reason": (
+            raw.get("raw_fallback_only_reason")
+            or retrieval_summary.get("raw_fallback_only_reason")
+        ),
+        "raw_fallback_topic_mismatch_count": int(
+            raw.get("raw_fallback_topic_mismatch_count")
+            or retrieval_summary.get("raw_fallback_topic_mismatch_count")
+            or 0
+        ),
+        "raw_fallback_topic_mismatch_ratio": float(
+            raw.get("raw_fallback_topic_mismatch_ratio")
+            or retrieval_summary.get("raw_fallback_topic_mismatch_ratio")
+            or 0.0
+        ),
+        "primary_evidence_available": bool(
+            raw.get("primary_evidence_available")
+            if raw.get("primary_evidence_available") is not None
+            else retrieval_summary.get("primary_evidence_available", False)
+        ),
+        "normalized_document_available": bool(
+            raw.get("normalized_document_available")
+            if raw.get("normalized_document_available") is not None
+            else retrieval_summary.get("normalized_document_available", False)
+        ),
+        "weak_evidence_warning": bool(
+            raw.get("weak_evidence_warning")
+            if raw.get("weak_evidence_warning") is not None
+            else retrieval_summary.get("weak_evidence_warning", False)
+        ),
     }
 
     return {

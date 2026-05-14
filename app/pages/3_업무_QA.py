@@ -167,6 +167,32 @@ if run:
         f"raw_candidate: {summary.get('raw_candidate_count', 0)} · "
         f"topic_mismatch: {summary.get('topic_mismatch_count', 0)}"
     )
+    # MVP 2차 Step 4: Raw Fallback 오남용 방지 진단 — 답변 신뢰도와 raw_fallback
+    # 사용 양상을 한 줄로 확인할 수 있게 한다 (UI 대규모 변경 없이 caption 만 보강).
+    evidence_strength = result.get("evidence_strength") or "-"
+    raw_fb_only = bool(result.get("raw_fallback_only"))
+    raw_fb_only_reason = result.get("raw_fallback_only_reason") or "-"
+    raw_fb_mismatch_count = int(result.get("raw_fallback_topic_mismatch_count") or 0)
+    raw_fb_mismatch_ratio = float(
+        result.get("raw_fallback_topic_mismatch_ratio") or 0.0
+    )
+    weak_warn = bool(result.get("weak_evidence_warning"))
+    st.caption(
+        f"evidence_strength: `{evidence_strength}` · "
+        f"raw_fallback_only: `{raw_fb_only}`"
+        + (f" (reason=`{raw_fb_only_reason}`)" if raw_fb_only else "")
+        + " · "
+        f"raw_fallback_topic_mismatch: {raw_fb_mismatch_count} "
+        f"(ratio={raw_fb_mismatch_ratio:.2f}) · "
+        f"weak_evidence_warning: `{weak_warn}`"
+    )
+    if weak_warn:
+        st.warning(
+            "**약한 근거 경고 (weak_evidence_warning)** — primary Normalized "
+            "Document 가 없고 raw_fallback 의 topic mismatch 비율이 높습니다. "
+            "답변은 생성되었지만 근거가 약할 수 있으니, 정규화 문서를 보강하거나 "
+            "질문을 더 구체화한 뒤 다시 시도해 주세요."
+        )
     st.caption(
         f"min_sim={summary.get('min_similarity', settings.min_similarity_score):.2f} · "
         f"min_final={summary.get('min_final', settings.min_final_score):.2f} · "
