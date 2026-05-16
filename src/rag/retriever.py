@@ -123,8 +123,17 @@ class Retriever:
         # query metadata 추출 (date / topics / intent)
         query_meta = extract_query_metadata(query or "")
 
+        # MVP 2차 Step 1 (Retrieval Diagnostics 강화): 첫 topic 을 별도로 노출.
+        # query_topics 가 list 이므로 단수형 ``query_topic`` (대표 topic) 도 함께 제공해
+        # Slack debug / Streamlit 카드 표시에서 바로 쓸 수 있게 한다.
+        _qtopics: List[str] = list(query_meta.get("query_topics") or [])
+        _qtopic_single: Optional[str] = _qtopics[0] if _qtopics else None
+
         details = RetrievalDetails(summary={
             "candidate_count": 0,
+            # MVP 2차 Step 1: candidate_count 의 alias.
+            # Slack/Streamlit diagnostics 가 통일된 이름 (retrieved_count) 으로 읽을 수 있게 둔다.
+            "retrieved_count": 0,
             "passed_count": 0,
             "dropped_count": 0,
             "min_similarity": float(min_similarity if min_similarity is not None else settings.min_similarity_score),
@@ -139,7 +148,9 @@ class Retriever:
             # date / topic 진단
             "query_date": query_meta.get("query_date"),
             "query_date_text": query_meta.get("query_date_text"),
-            "query_topics": query_meta.get("query_topics") or [],
+            "query_topics": _qtopics,
+            # MVP 2차 Step 1: list 의 첫 topic 을 단수로 노출. 비어있으면 None.
+            "query_topic": _qtopic_single,
             "query_intent": query_meta.get("query_intent") or [],
             "enable_date_filter": bool(
                 enable_date_filter if enable_date_filter is not None else settings.enable_date_filter
@@ -148,6 +159,15 @@ class Retriever:
             "date_mismatch_penalty": float(settings.date_mismatch_penalty),
             "topic_match_boost": float(settings.topic_match_boost),
             "topic_mismatch_penalty": float(settings.topic_mismatch_penalty),
+            # MVP 2차 Step 1: topic mismatch / candidate 구성 진단 카운트.
+            # 후처리에서 채워진다 (default 0).
+            "topic_mismatch_count": 0,
+            "normalized_document_candidate_count": 0,
+            "raw_candidate_count": 0,
+            # MVP 2차 Step 2: topic-aware 격하 진단.
+            # apply_normalized_document_priority 가 명확한 topic mismatch chunk 를
+            # primary_card 로 승격하지 않고 raw_fallback 으로 격하한 건수.
+            "topic_mismatch_demoted_count": 0,
             # Normalized Document 우선 retrieval 진단 (Task 6)
             # 신규 표준 키
             "prioritize_normalized_documents": bool(settings.prioritize_knowledge_cards),
@@ -284,12 +304,39 @@ class Retriever:
                 else:
                     raw_fallback_count += 1
 
+        # MVP 2차 Step 1 (Retrieval Diagnostics):
+        # 어떤 chunk 가 검색됐는지 / 왜 mismatch 가 났는지 더 잘 보이도록
+        # candidate 전체에 대한 진단 카운트도 함께 채운다. (검색 정책은 변경하지 않음)
+        nd_candidate_count = 0
+        raw_candidate_count = 0
+        topic_mismatch_count = 0
+        # MVP 2차 Step 2: topic-aware 격하 건수
+        topic_mismatch_demoted_count = 0
+        for c in ranked:
+            md = c.metadata or {}
+            if is_normalized_document_chunk(c):
+                nd_candidate_count += 1
+            else:
+                raw_candidate_count += 1
+            if md.get("topic_match") == "mismatch":
+                topic_mismatch_count += 1
+            if md.get("topic_mismatch_demoted"):
+                topic_mismatch_demoted_count += 1
+
         # 8) 결과 패킹
         details.candidates = ranked
         details.passed = passed
         details.summary["candidate_count"] = len(ranked)
+        # MVP 2차 Step 1: candidate_count 와 동일한 의미의 alias.
+        details.summary["retrieved_count"] = len(ranked)
         details.summary["passed_count"] = len(passed)
         details.summary["dropped_count"] = len(ranked) - len(passed)
+        # MVP 2차 Step 1: 진단 카운트
+        details.summary["topic_mismatch_count"] = topic_mismatch_count
+        details.summary["normalized_document_candidate_count"] = nd_candidate_count
+        details.summary["raw_candidate_count"] = raw_candidate_count
+        # MVP 2차 Step 2: topic-aware 격하 건수
+        details.summary["topic_mismatch_demoted_count"] = topic_mismatch_demoted_count
         # 신규 표준 키
         details.summary["normalized_document_count"] = kc_count
         # legacy 호환 키

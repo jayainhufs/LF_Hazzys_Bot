@@ -35,5 +35,10 @@ scikit-learn>=1.4.0
 # Streamlit 파일 변경 감지 안정화
 watchdog>=4.0.0
 
+# Slack Bot (선택 — Slack QA Bot MVP)
+#  - 사용 시: `python scripts/run_slack_bot.py`
+#  - Socket Mode 기반이라 추가 SDK는 필요 없음
+slack-bolt>=1.18.0
+
 # 개발/테스트 (선택)
 pytest>=8.2.0
