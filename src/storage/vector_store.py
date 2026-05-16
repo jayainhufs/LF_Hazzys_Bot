@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from src.config import settings
 from src.logger import get_logger
+from src.rag.bm25 import BM25Document, BM25Scorer
 from src.schemas import Chunk, RetrievedChunk
 
 log = get_logger(__name__)
@@ -189,6 +190,67 @@ class VectorStore:
                     final_score=score,
                     parent_chunk_id=meta.get("parent_chunk_id"),
                     metadata=dict(meta),
+                )
+            )
+        return out
+
+    def search_bm25(
+        self,
+        query: str,
+        top_k: int = 20,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[RetrievedChunk]:
+        """Keyword search over stored Chroma documents using local BM25."""
+        if not query or not query.strip():
+            return []
+        try:
+            res = self._collection.get(
+                where=filters or None,
+                include=["documents", "metadatas"],
+            )
+        except Exception as e:
+            log.error("Chroma BM25 document load 실패: %s", e)
+            raise
+
+        ids = res.get("ids", []) or []
+        docs = res.get("documents", []) or []
+        metas = res.get("metadatas", []) or []
+        if not ids:
+            return []
+
+        payload_by_id: Dict[str, Dict[str, Any]] = {}
+        bm25_docs: List[BM25Document] = []
+        for cid, doc, meta in zip(ids, docs, metas):
+            meta = meta or {}
+            text = doc or ""
+            payload_by_id[cid] = {"document": text, "metadata": dict(meta)}
+            bm25_docs.append(
+                BM25Document(document_id=str(cid), text=text, payload=payload_by_id[cid])
+            )
+
+        results = BM25Scorer(bm25_docs).search(query, top_k=top_k)
+        out: List[RetrievedChunk] = []
+        for result in results:
+            payload = result.payload or {}
+            doc = payload.get("document") or ""
+            meta = dict(payload.get("metadata") or {})
+            meta["bm25_score"] = round(float(result.score), 6)
+            meta["bm25_rank"] = int(result.rank)
+            meta["bm25_normalized_score"] = round(float(result.normalized_score), 6)
+            out.append(
+                RetrievedChunk(
+                    chunk_id=result.document_id,
+                    document_id=str(meta.get("document_id", "")),
+                    file_name=str(meta.get("file_name", "")),
+                    source_type=str(meta.get("source_type", "")),
+                    uploaded_category=str(meta.get("uploaded_category", "")),
+                    section_title=meta.get("section_title"),
+                    content_type=str(meta.get("content_type", "text")),
+                    content=doc,
+                    score=float(result.normalized_score),
+                    final_score=float(result.normalized_score),
+                    parent_chunk_id=meta.get("parent_chunk_id"),
+                    metadata=meta,
                 )
             )
         return out

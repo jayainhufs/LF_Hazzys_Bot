@@ -201,6 +201,17 @@ if run:
         f"enable_date_filter={summary.get('enable_date_filter', settings.enable_date_filter)}"
     )
 
+    if summary.get("hybrid_retrieval_enabled"):
+        st.caption(
+            "hybrid_retrieval: enabled | "
+            f"vector_candidate: {summary.get('vector_candidate_count', 0)} | "
+            f"bm25_candidate: {summary.get('bm25_candidate_count', 0)} | "
+            f"merged: {summary.get('hybrid_merged_candidate_count', 0)} | "
+            f"overlap: {summary.get('overlap_candidate_count', 0)} | "
+            f"bm25_only: {summary.get('bm25_only_candidate_count', 0)} | "
+            f"vector_only: {summary.get('vector_only_candidate_count', 0)}"
+        )
+
     if skipped:
         st.warning(
             "**근거 부족으로 Gemini Generation 을 호출하지 않았습니다.**\n\n"

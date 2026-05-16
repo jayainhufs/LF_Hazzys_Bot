@@ -294,6 +294,17 @@ if st.button("검색 실행", type="primary", disabled=not query.strip()):
     )
 
     # -------------------- 통과 결과 없음 ------------------------------------
+    if summary.get("hybrid_retrieval_enabled"):
+        st.caption(
+            "hybrid_retrieval: enabled | "
+            f"vector_candidate: {summary.get('vector_candidate_count', 0)} | "
+            f"bm25_candidate: {summary.get('bm25_candidate_count', 0)} | "
+            f"merged: {summary.get('hybrid_merged_candidate_count', 0)} | "
+            f"overlap: {summary.get('overlap_candidate_count', 0)} | "
+            f"bm25_only: {summary.get('bm25_only_candidate_count', 0)} | "
+            f"vector_only: {summary.get('vector_only_candidate_count', 0)}"
+        )
+
     if not passed:
         st.warning(
             "기준을 통과한 검색 결과가 없습니다.\n\n"
