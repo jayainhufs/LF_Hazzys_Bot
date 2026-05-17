@@ -567,6 +567,7 @@ def _format_debug_summary(
         "*진단 요약*",
         f"• evidence_strength: `{evidence_strength}`",
         f"• answer_mode: `{mode}`",
+        f"• answer_format_label: `{_display_value(diagnostics.get('answer_format_label'))}`",
         f"• query_topic: `{query_topic}`",
         f"• weak_evidence_warning: `{weak_warning}`",
     ]
