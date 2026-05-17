@@ -261,6 +261,14 @@ class QAPipeline:
                 "normalized_document_available": False,
                 "weak_evidence_warning": False,
                 "evidence_strength": "insufficient",
+                # MVP 2차 Step 6: Hybrid Retrieval / BM25 diagnostics defaults.
+                "hybrid_retrieval_enabled": bool(settings.hybrid_retrieval_enabled),
+                "bm25_candidate_count": 0,
+                "vector_candidate_count": 0,
+                "hybrid_merged_candidate_count": 0,
+                "bm25_only_candidate_count": 0,
+                "vector_only_candidate_count": 0,
+                "overlap_candidate_count": 0,
             }
 
         # 1) 정제
@@ -463,6 +471,18 @@ class QAPipeline:
                 ],
                 "weak_evidence_warning": step4_diag["weak_evidence_warning"],
                 "evidence_strength": step4_diag["evidence_strength"],
+                # MVP 2차 Step 6: Hybrid Retrieval / BM25 diagnostics.
+                "hybrid_retrieval_enabled": summary.get("hybrid_retrieval_enabled"),
+                "bm25_candidate_count": summary.get("bm25_candidate_count"),
+                "vector_candidate_count": summary.get("vector_candidate_count"),
+                "hybrid_merged_candidate_count": summary.get(
+                    "hybrid_merged_candidate_count"
+                ),
+                "bm25_only_candidate_count": summary.get("bm25_only_candidate_count"),
+                "vector_only_candidate_count": summary.get(
+                    "vector_only_candidate_count"
+                ),
+                "overlap_candidate_count": summary.get("overlap_candidate_count"),
             },
         )
         if save_log:
@@ -555,6 +575,20 @@ class QAPipeline:
             ],
             "weak_evidence_warning": step4_diag["weak_evidence_warning"],
             "evidence_strength": step4_diag["evidence_strength"],
+            # MVP 2차 Step 6: Hybrid Retrieval / BM25 diagnostics.
+            "hybrid_retrieval_enabled": bool(summary.get("hybrid_retrieval_enabled")),
+            "bm25_candidate_count": int(summary.get("bm25_candidate_count") or 0),
+            "vector_candidate_count": int(summary.get("vector_candidate_count") or 0),
+            "hybrid_merged_candidate_count": int(
+                summary.get("hybrid_merged_candidate_count") or 0
+            ),
+            "bm25_only_candidate_count": int(
+                summary.get("bm25_only_candidate_count") or 0
+            ),
+            "vector_only_candidate_count": int(
+                summary.get("vector_only_candidate_count") or 0
+            ),
+            "overlap_candidate_count": int(summary.get("overlap_candidate_count") or 0),
         }
 
     # ------------------------------------------------------------------

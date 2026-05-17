@@ -10,7 +10,47 @@
 """
 from __future__ import annotations
 
+import pytest
+
 from src.schemas import KnowledgeCard, NormalizedDocument
+from src.schemas.normalized_document import (
+    VALID_ANSWER_USE_CASES,
+    VALID_NORMALIZED_DOCUMENT_TYPES,
+)
+
+
+LEGACY_DOCUMENT_TYPES = [
+    "workflow",
+    "checklist",
+    "issue",
+    "faq",
+    "decision",
+    "communication_template",
+    "glossary",
+]
+
+NEW_DOCUMENT_TYPES = [
+    "context_note",
+    "status_update",
+    "action_item",
+    "issue_log",
+    "decision_log",
+    "campaign_summary",
+    "communication_history",
+    "reference_note",
+    "report_insight",
+]
+
+ANSWER_USE_CASES = [
+    "procedure",
+    "summary",
+    "troubleshooting",
+    "draft_message",
+    "compare",
+    "history_lookup",
+    "checklist",
+    "freeform_grounded",
+]
 
 
 def _sample_document(**overrides) -> NormalizedDocument:
@@ -44,6 +84,7 @@ def _sample_document(**overrides) -> NormalizedDocument:
             }
         ],
         "parent_raw_chunk_ids": ["raw_001", "raw_002"],
+        "answer_use_cases": [],
         "sanitized_markdown": "",
         "metadata": {"prompt_version": "mock-v1"},
     }
@@ -84,6 +125,47 @@ def test_normalized_document_can_be_created():
     assert doc.normalized_document_id == "kc_001"
     assert doc.normalized_document_type == "workflow"
     assert doc.topic_tags == ["meta"]
+    assert doc.answer_use_cases == []
+
+
+@pytest.mark.parametrize("document_type", LEGACY_DOCUMENT_TYPES)
+def test_validate_minimum_accepts_existing_document_types(document_type: str):
+    assert document_type in VALID_NORMALIZED_DOCUMENT_TYPES
+    assert _sample_document(card_type=document_type).validate_minimum() is True
+
+
+@pytest.mark.parametrize("document_type", NEW_DOCUMENT_TYPES)
+def test_validate_minimum_accepts_v1_5_document_types(document_type: str):
+    assert document_type in VALID_NORMALIZED_DOCUMENT_TYPES
+    assert _sample_document(card_type=document_type).validate_minimum() is True
+
+
+def test_answer_use_cases_default_to_empty_list_for_legacy_documents():
+    data = _sample_document().to_dict()
+    data.pop("answer_use_cases")
+    restored = NormalizedDocument.from_dict(data)
+    assert restored.answer_use_cases == []
+    assert restored.validate_minimum() is True
+
+
+def test_answer_use_cases_are_preserved_in_roundtrip():
+    doc = _sample_document(answer_use_cases=["summary", "draft_message"])
+    restored = NormalizedDocument.from_dict(doc.to_dict())
+    assert restored.answer_use_cases == ["summary", "draft_message"]
+    assert restored.validate_minimum() is True
+
+
+def test_multiple_answer_use_cases_are_allowed():
+    use_cases = ["summary", "history_lookup", "freeform_grounded"]
+    doc = _sample_document(answer_use_cases=use_cases)
+    assert all(use_case in VALID_ANSWER_USE_CASES for use_case in use_cases)
+    assert doc.answer_use_cases == use_cases
+    assert doc.validate_minimum() is True
+
+
+def test_unknown_answer_use_case_fails_minimum_validation():
+    doc = _sample_document(answer_use_cases=["summary", "unknown_use_case"])
+    assert doc.validate_minimum() is False
 
 
 def test_to_dict_from_dict_roundtrip():
@@ -96,10 +178,12 @@ def test_from_dict_handles_missing_optional_lists():
     data = _sample_document().to_dict()
     data["topic_tags"] = None
     data["steps"] = None
+    data["answer_use_cases"] = None
     data["metadata"] = None
     restored = NormalizedDocument.from_dict(data)
     assert restored.topic_tags == []
     assert restored.steps == []
+    assert restored.answer_use_cases == []
     assert restored.metadata == {}
 
 
@@ -109,6 +193,7 @@ def test_to_markdown_contains_required_sections():
     assert "- card_type: workflow" in md
     assert "- primary_topic: meta" in md
     assert "- source_file: [2026년 4월 29일 TODO].txt" in md
+    assert "- answer_use_cases: -" in md
     assert "## 요약" in md
     assert "## 언제 사용하는가" in md
     assert "## 선행 조건" in md

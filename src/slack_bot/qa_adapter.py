@@ -149,6 +149,11 @@ def _serialize_chunks(chunks: List[RetrievedChunk]) -> List[Dict[str, Any]]:
                 "date_boost": md.get("date_boost"),
                 # MVP 2차 Step 2: topic-aware 격하 여부
                 "topic_mismatch_demoted": bool(md.get("topic_mismatch_demoted")),
+                # MVP 2차 Step 6: Hybrid Retrieval / BM25 source diagnostics.
+                "retrieval_sources": md.get("retrieval_sources") or [],
+                "bm25_rank": md.get("bm25_rank"),
+                "vector_rank": md.get("vector_rank"),
+                "hybrid_rrf_score": md.get("hybrid_rrf_score"),
             }
         )
     return out
@@ -335,6 +340,42 @@ def answer_slack_question(
             raw.get("weak_evidence_warning")
             if raw.get("weak_evidence_warning") is not None
             else retrieval_summary.get("weak_evidence_warning", False)
+        ),
+        # MVP 2차 Step 6: Hybrid Retrieval / BM25 diagnostics.
+        "hybrid_retrieval_enabled": bool(
+            raw.get("hybrid_retrieval_enabled")
+            if raw.get("hybrid_retrieval_enabled") is not None
+            else retrieval_summary.get("hybrid_retrieval_enabled", False)
+        ),
+        "bm25_candidate_count": int(
+            raw.get("bm25_candidate_count")
+            or retrieval_summary.get("bm25_candidate_count")
+            or 0
+        ),
+        "vector_candidate_count": int(
+            raw.get("vector_candidate_count")
+            or retrieval_summary.get("vector_candidate_count")
+            or 0
+        ),
+        "hybrid_merged_candidate_count": int(
+            raw.get("hybrid_merged_candidate_count")
+            or retrieval_summary.get("hybrid_merged_candidate_count")
+            or 0
+        ),
+        "bm25_only_candidate_count": int(
+            raw.get("bm25_only_candidate_count")
+            or retrieval_summary.get("bm25_only_candidate_count")
+            or 0
+        ),
+        "vector_only_candidate_count": int(
+            raw.get("vector_only_candidate_count")
+            or retrieval_summary.get("vector_only_candidate_count")
+            or 0
+        ),
+        "overlap_candidate_count": int(
+            raw.get("overlap_candidate_count")
+            or retrieval_summary.get("overlap_candidate_count")
+            or 0
         ),
     }
 

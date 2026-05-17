@@ -15,6 +15,7 @@ Normalization 체계로 명칭 통일).
 from __future__ import annotations
 
 from src.schemas.normalized_document import (  # noqa: F401  (re-export)
+    VALID_ANSWER_USE_CASES,
     VALID_CARD_TYPES,
     VALID_NORMALIZED_DOCUMENT_TYPES,
     KnowledgeCard,
@@ -26,4 +27,5 @@ __all__ = [
     "NormalizedDocument",
     "VALID_CARD_TYPES",
     "VALID_NORMALIZED_DOCUMENT_TYPES",
+    "VALID_ANSWER_USE_CASES",
 ]

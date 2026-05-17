@@ -563,7 +563,8 @@ class TestFormatQaResultWithRealisticAnswer:
         # diagnostics 에 step1 신규 필드 추가 (qa_adapter 가 채워주는 값과 동일 shape).
         result["diagnostics"].update({
             "query_topic": "kakao",
-            "query_intent": ["procedure"],
+            "query_intent": ["issue_lookup"],
+            "answer_format_label": "history_lookup",
             "query_date": None,
             "retrieved_count": 7,
             "passed_count": 3,
@@ -584,6 +585,8 @@ class TestFormatQaResultWithRealisticAnswer:
         # 진단 블록 신규 라벨
         assert "query_topic" in text
         assert "`kakao`" in text
+        assert "query_intent: `issue_lookup`" in text
+        assert "answer_format_label: `history_lookup`" in text
         assert "retrieved: 7" in text
         assert "passed: 3" in text
         assert "topic_mismatch_count: 2" in text
@@ -638,6 +641,7 @@ def _step5_debug_result() -> Dict[str, Any]:
         },
         "diagnostics": {
             "answer_mode": "raw_fallback",
+            "answer_format_label": "procedure",
             "evidence_strength": "weak",
             "query_topic": "meta",
             "query_intent": ["procedure"],

@@ -474,6 +474,18 @@ def _format_source_debug_fields(it: Dict[str, Any]) -> List[str]:
         lines.append(f"topic_match=`{topic_match}`")
     if it.get("topic_mismatch_demoted"):
         lines.append("topic_mismatch_demoted=`True`")
+    sources = it.get("retrieval_sources") or []
+    if sources:
+        lines.append(f"retrieval_sources=`{','.join(str(x) for x in sources)}`")
+    bm25_rank = it.get("bm25_rank")
+    if isinstance(bm25_rank, int):
+        lines.append(f"bm25_rank=`{bm25_rank}`")
+    vector_rank = it.get("vector_rank")
+    if isinstance(vector_rank, int):
+        lines.append(f"vector_rank=`{vector_rank}`")
+    hybrid_rrf = it.get("hybrid_rrf_score")
+    if isinstance(hybrid_rrf, (int, float)):
+        lines.append(f"hybrid_rrf_score=`{float(hybrid_rrf):.3f}`")
     return lines
 
 
@@ -531,6 +543,7 @@ def _format_diagnostics(
             raw_evidence_count=raw_evidence_count,
             raw_fallback_count=raw_fallback_count,
         ),
+        _format_debug_hybrid_diagnostics(diagnostics),
         _format_debug_topic_diagnostics(diagnostics),
     ]
     return "\n\n".join(block for block in blocks if block)
@@ -554,6 +567,7 @@ def _format_debug_summary(
         "*진단 요약*",
         f"• evidence_strength: `{evidence_strength}`",
         f"• answer_mode: `{mode}`",
+        f"• answer_format_label: `{_display_value(diagnostics.get('answer_format_label'))}`",
         f"• query_topic: `{query_topic}`",
         f"• weak_evidence_warning: `{weak_warning}`",
     ]
@@ -590,6 +604,24 @@ def _format_debug_candidate_counts(
         f"• normalized_document_candidate: {nd_cand} · raw_candidate: {raw_cand}",
         f"• primary_normalized_document: {primary_count}",
         f"• raw_evidence: {raw_evidence_count} · raw_fallback: {raw_fallback_count}",
+    ])
+
+
+def _format_debug_hybrid_diagnostics(diagnostics: Dict[str, Any]) -> str:
+    """Show optional hybrid retrieval diagnostics only when hybrid is enabled."""
+    if not diagnostics.get("hybrid_retrieval_enabled"):
+        return ""
+    vector_count = int(diagnostics.get("vector_candidate_count") or 0)
+    bm25_count = int(diagnostics.get("bm25_candidate_count") or 0)
+    merged_count = int(diagnostics.get("hybrid_merged_candidate_count") or 0)
+    bm25_only = int(diagnostics.get("bm25_only_candidate_count") or 0)
+    vector_only = int(diagnostics.get("vector_only_candidate_count") or 0)
+    overlap = int(diagnostics.get("overlap_candidate_count") or 0)
+    return "\n".join([
+        "*Hybrid Retrieval*",
+        f"??vector_candidate: {vector_count} 쨌 bm25_candidate: {bm25_count}",
+        f"??merged: {merged_count} 쨌 overlap: {overlap}",
+        f"??bm25_only: {bm25_only} 쨌 vector_only: {vector_only}",
     ])
 
 

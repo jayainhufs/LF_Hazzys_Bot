@@ -1,5 +1,5 @@
 """
-4_검색_테스트.py
+4_search_test.py
 ================
 LLM generation 호출 없이 retrieval 결과만 확인.
 임베딩 모델/카테고리 필터/top_k/threshold 조합으로 검색 품질을 검증한다.
@@ -120,10 +120,13 @@ with col_kc1:
         "content_type 필터",
         ["전체", "normalized_document", "knowledge_card", "conversation", "text", "raw_table"],
         index=0,
+        format_func=lambda value: {
+            "knowledge_card": "정규화 문서 (legacy content_type)",
+        }.get(value, value),
         help=(
             "검색 결과를 content_type 으로 필터링한다 (UI 상에서만 적용). "
-            "신규 표준은 'normalized_document', 기존 색인 데이터는 'knowledge_card' 로 "
-            "저장되어 있을 수 있다."
+            "정규화 문서는 신규 표준 content_type 과 기존 색인 데이터의 legacy content_type 을 "
+            "모두 인식한다."
         ),
     )
 with col_kc2:
@@ -294,6 +297,17 @@ if st.button("검색 실행", type="primary", disabled=not query.strip()):
     )
 
     # -------------------- 통과 결과 없음 ------------------------------------
+    if summary.get("hybrid_retrieval_enabled"):
+        st.caption(
+            "hybrid_retrieval: enabled | "
+            f"vector_candidate: {summary.get('vector_candidate_count', 0)} | "
+            f"bm25_candidate: {summary.get('bm25_candidate_count', 0)} | "
+            f"merged: {summary.get('hybrid_merged_candidate_count', 0)} | "
+            f"overlap: {summary.get('overlap_candidate_count', 0)} | "
+            f"bm25_only: {summary.get('bm25_only_candidate_count', 0)} | "
+            f"vector_only: {summary.get('vector_only_candidate_count', 0)}"
+        )
+
     if not passed:
         st.warning(
             "기준을 통과한 검색 결과가 없습니다.\n\n"

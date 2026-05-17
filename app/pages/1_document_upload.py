@@ -1,8 +1,8 @@
 """
-1_문서_업로드.py
-================
+1_document_upload.py
+====================
 4가지 업로드 카테고리 + 기타 카테고리 별로 파일을 drag-and-drop 으로 업로드한다.
-업로드 후 색인은 '2_문서_색인' 페이지에서 진행한다.
+업로드 후 색인은 '문서 색인' 페이지에서 진행한다.
 """
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ if uploads:
             for p, _status in saved:
                 st.write(f"- [OK] {p.relative_to(settings.project_root)}")
             st.warning(
-                "아직 색인되지 않았습니다. 좌측 '2_문서_색인' 페이지에서 색인을 실행하세요."
+                "아직 색인되지 않았습니다. 좌측 '문서 색인' 페이지에서 색인을 실행하세요."
             )
 
 st.divider()

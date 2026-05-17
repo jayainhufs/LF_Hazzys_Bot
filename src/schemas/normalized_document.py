@@ -32,6 +32,26 @@ VALID_NORMALIZED_DOCUMENT_TYPES = {
     "decision",
     "glossary",
     "communication_template",
+    "context_note",
+    "status_update",
+    "action_item",
+    "issue_log",
+    "decision_log",
+    "campaign_summary",
+    "communication_history",
+    "reference_note",
+    "report_insight",
+}
+
+VALID_ANSWER_USE_CASES = {
+    "procedure",
+    "summary",
+    "troubleshooting",
+    "draft_message",
+    "compare",
+    "history_lookup",
+    "checklist",
+    "freeform_grounded",
 }
 
 # legacy compatibility — 기존 코드 / 테스트에서 import 가능
@@ -72,6 +92,7 @@ class NormalizedDocument:
     open_questions: List[str] = field(default_factory=list)
     evidence_spans: List[Dict[str, Any]] = field(default_factory=list)
     parent_raw_chunk_ids: List[str] = field(default_factory=list)
+    answer_use_cases: List[str] = field(default_factory=list)
     sanitized_markdown: str = ""
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -124,6 +145,7 @@ class NormalizedDocument:
             "open_questions",
             "evidence_spans",
             "parent_raw_chunk_ids",
+            "answer_use_cases",
         }
         for key in list_fields:
             if data.get(key) is None:
@@ -147,6 +169,7 @@ class NormalizedDocument:
             f"- source_file: {self.source_file_name}",
             f"- source_category: {self.source_category}",
             f"- display_date: {self.display_date or '-'}",
+            f"- answer_use_cases: {', '.join(self.answer_use_cases) if self.answer_use_cases else '-'}",
             "",
             "## 요약",
             self.summary or "",
@@ -187,6 +210,8 @@ class NormalizedDocument:
         if not self.card_type or not self.card_type.strip():
             return False
         if self.card_type not in VALID_NORMALIZED_DOCUMENT_TYPES:
+            return False
+        if any(use_case not in VALID_ANSWER_USE_CASES for use_case in self.answer_use_cases):
             return False
         if not self.title or not self.title.strip():
             return False

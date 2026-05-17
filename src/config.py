@@ -135,6 +135,13 @@ class Settings:
     use_mmr: bool = True
     mmr_lambda: float = 0.7
 
+    # ----- Hybrid retrieval / BM25 (MVP 2차 Step 6) -----
+    hybrid_retrieval_enabled: bool = False
+    hybrid_bm25_top_k: int = 20
+    hybrid_rrf_k: int = 60
+    hybrid_vector_weight: float = 1.0
+    hybrid_bm25_weight: float = 1.0
+
     # ----- Date / Topic-aware retrieval -----
     date_exact_match_boost: float = 1.25
     date_mismatch_penalty: float = 0.55
@@ -347,6 +354,19 @@ class Settings:
         s.min_retrieved_chunks = _env_int("MIN_RETRIEVED_CHUNKS", s.min_retrieved_chunks)
         s.use_mmr = _env_bool("USE_MMR", s.use_mmr)
         s.mmr_lambda = _env_float("MMR_LAMBDA", s.mmr_lambda)
+
+        # Hybrid retrieval / BM25
+        s.hybrid_retrieval_enabled = _env_bool(
+            "HYBRID_RETRIEVAL_ENABLED", s.hybrid_retrieval_enabled
+        )
+        s.hybrid_bm25_top_k = _env_int("HYBRID_BM25_TOP_K", s.hybrid_bm25_top_k)
+        s.hybrid_rrf_k = _env_int("HYBRID_RRF_K", s.hybrid_rrf_k)
+        s.hybrid_vector_weight = _env_float(
+            "HYBRID_VECTOR_WEIGHT", s.hybrid_vector_weight
+        )
+        s.hybrid_bm25_weight = _env_float(
+            "HYBRID_BM25_WEIGHT", s.hybrid_bm25_weight
+        )
 
         # Date / Topic-aware retrieval
         s.date_exact_match_boost = _env_float("DATE_EXACT_MATCH_BOOST", s.date_exact_match_boost)

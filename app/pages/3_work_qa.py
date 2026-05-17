@@ -1,6 +1,6 @@
 """
-3_업무_QA.py
-=============
+3_work_qa.py
+============
 업무 질문 → Gemini 답변.
 - 카테고리 필터 / top_k / query rewrite 옵션 제공
 - 근거 chunk 를 expander 로 표시 (final_score / passed_threshold 포함)
@@ -67,7 +67,7 @@ if run:
     if not settings.has_api_key():
         st.error(
             "GOOGLE_API_KEY 가 설정되어 있지 않습니다. `.env` 를 확인하세요. "
-            "(검색만 확인하려면 '4_검색_테스트' 페이지를 사용하세요.)"
+            "(검색만 확인하려면 '검색 테스트' 페이지를 사용하세요.)"
         )
         st.stop()
 
@@ -200,6 +200,17 @@ if run:
         f"use_mmr={summary.get('use_mmr', settings.use_mmr)} · "
         f"enable_date_filter={summary.get('enable_date_filter', settings.enable_date_filter)}"
     )
+
+    if summary.get("hybrid_retrieval_enabled"):
+        st.caption(
+            "hybrid_retrieval: enabled | "
+            f"vector_candidate: {summary.get('vector_candidate_count', 0)} | "
+            f"bm25_candidate: {summary.get('bm25_candidate_count', 0)} | "
+            f"merged: {summary.get('hybrid_merged_candidate_count', 0)} | "
+            f"overlap: {summary.get('overlap_candidate_count', 0)} | "
+            f"bm25_only: {summary.get('bm25_only_candidate_count', 0)} | "
+            f"vector_only: {summary.get('vector_only_candidate_count', 0)}"
+        )
 
     if skipped:
         st.warning(

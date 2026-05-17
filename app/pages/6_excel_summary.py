@@ -1,6 +1,6 @@
 """
-6_Excel_요약관리.py
-===================
+6_excel_summary.py
+==================
 Excel 한국어 요약본을 미리 보고, 필요 시 재생성한다.
 
 비용 노트:
@@ -46,7 +46,7 @@ for s in all_summaries:
 
 if not all_summaries:
     st.info(
-        "저장된 요약본이 없습니다. '2_문서_색인' 페이지에서 'Excel 상세 요약 생성' 옵션을 켜고 색인하세요."
+        "저장된 요약본이 없습니다. '문서 색인' 페이지에서 'Excel 상세 요약 생성' 옵션을 켜고 색인하세요."
     )
 else:
     for file_name, items in sorted(by_file.items()):
@@ -124,7 +124,7 @@ else:
         st.success(f"완료: 성공 {ok} · 실패 {fail}")
 
         st.warning(
-            "요약본을 다시 ChromaDB 에 반영하려면 '2_문서_색인' 페이지에서 "
+            "요약본을 다시 ChromaDB 에 반영하려면 '문서 색인' 페이지에서 "
             "해당 파일의 색인을 다시 실행해 주세요. (file_hash 가 같으면 skip 되므로 "
             "강제 재색인이 필요한 경우 `python scripts/reset_vector_db.py` 로 초기화하세요.)"
         )

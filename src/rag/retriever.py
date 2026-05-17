@@ -16,7 +16,7 @@ ChromaDB 는 cosine **distance** (낮을수록 좋음) 를 반환하므로,
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from src.config import settings
 from src.logger import get_logger
@@ -141,6 +141,19 @@ class Retriever:
             "max_per_file": int(max_per_file if max_per_file is not None else settings.max_chunks_per_file),
             "use_mmr": bool(use_mmr if use_mmr is not None else settings.use_mmr),
             "mmr_lambda": float(settings.mmr_lambda),
+            # MVP 2차 Step 6: Hybrid Retrieval / BM25 diagnostics.
+            # HYBRID_RETRIEVAL_ENABLED=false is the default, so vector-only
+            # behavior remains the baseline.
+            "hybrid_retrieval_enabled": bool(settings.hybrid_retrieval_enabled),
+            "bm25_candidate_count": 0,
+            "vector_candidate_count": 0,
+            "hybrid_merged_candidate_count": 0,
+            "bm25_only_candidate_count": 0,
+            "vector_only_candidate_count": 0,
+            "overlap_candidate_count": 0,
+            "hybrid_rrf_k": int(settings.hybrid_rrf_k),
+            "hybrid_vector_weight": float(settings.hybrid_vector_weight),
+            "hybrid_bm25_weight": float(settings.hybrid_bm25_weight),
             "top_k": int(top_k or settings.top_k),
             "uploaded_category_filter": uploaded_category or "all",
             "score_interpretation": "score = 1 - cosine_distance (높을수록 유사)",
@@ -208,7 +221,23 @@ class Retriever:
             return details
 
         candidates = self.vector_store.search(q_vec, top_k=raw_top_k, filters=filters)
+        hybrid_summary: Dict[str, Any] = {
+            "vector_candidate_count": len(candidates),
+            "bm25_candidate_count": 0,
+            "hybrid_merged_candidate_count": len(candidates),
+            "bm25_only_candidate_count": 0,
+            "vector_only_candidate_count": len(candidates),
+            "overlap_candidate_count": 0,
+        }
+        if details.summary["hybrid_retrieval_enabled"]:
+            candidates, hybrid_summary = self._merge_hybrid_candidates(
+                query=query,
+                vector_candidates=candidates,
+                top_k=raw_top_k,
+                filters=filters,
+            )
         if not candidates:
+            details.summary.update(hybrid_summary)
             return details
 
         # 1) rerank (final_score 채움 + 진단 metadata 기록)
@@ -343,6 +372,8 @@ class Retriever:
         details.summary["knowledge_card_count"] = kc_count
         details.summary["raw_evidence_count"] = raw_evidence_count
         details.summary["raw_fallback_count"] = raw_fallback_count
+        details.summary.update(hybrid_summary)
+        details.summary["hybrid_merged_candidate_count"] = len(candidates)
 
         tracker.set_retrieved_chunks(len(passed))
         return details
@@ -361,6 +392,109 @@ class Retriever:
         }
         cat = mapping.get(uploaded_category, uploaded_category)
         return {"uploaded_category": cat}
+
+    def _merge_hybrid_candidates(
+        self,
+        *,
+        query: str,
+        vector_candidates: List[RetrievedChunk],
+        top_k: int,
+        filters: Optional[Dict[str, Any]],
+    ) -> Tuple[List[RetrievedChunk], Dict[str, Any]]:
+        """
+        Merge vector and BM25 candidates with reciprocal rank fusion.
+
+        This is only called when HYBRID_RETRIEVAL_ENABLED=true. If the injected
+        vector store does not support BM25, the vector-only candidates are
+        returned unchanged with diagnostics that make the fallback visible.
+        """
+        bm25_search = getattr(self.vector_store, "search_bm25", None)
+        if bm25_search is None:
+            return list(vector_candidates), {
+                "vector_candidate_count": len(vector_candidates),
+                "bm25_candidate_count": 0,
+                "hybrid_merged_candidate_count": len(vector_candidates),
+                "bm25_only_candidate_count": 0,
+                "vector_only_candidate_count": len(vector_candidates),
+                "overlap_candidate_count": 0,
+            }
+
+        bm25_top_k = int(settings.hybrid_bm25_top_k or top_k)
+        bm25_candidates = list(
+            bm25_search(query=query, top_k=bm25_top_k, filters=filters)
+        )
+
+        vector_by_id: Dict[str, RetrievedChunk] = {
+            c.chunk_id: c for c in vector_candidates
+        }
+        bm25_by_id: Dict[str, RetrievedChunk] = {
+            c.chunk_id: c for c in bm25_candidates
+        }
+        vector_ranks = {c.chunk_id: idx for idx, c in enumerate(vector_candidates, start=1)}
+        bm25_ranks = {c.chunk_id: idx for idx, c in enumerate(bm25_candidates, start=1)}
+
+        rrf_k = max(1, int(settings.hybrid_rrf_k or 60))
+        vector_weight = float(settings.hybrid_vector_weight or 1.0)
+        bm25_weight = float(settings.hybrid_bm25_weight or 1.0)
+
+        merged: List[RetrievedChunk] = []
+        for chunk_id in set(vector_by_id) | set(bm25_by_id):
+            chunk = vector_by_id.get(chunk_id) or bm25_by_id[chunk_id]
+            md = dict(chunk.metadata or {})
+            sources: List[str] = []
+            vector_rank = vector_ranks.get(chunk_id)
+            bm25_rank = bm25_ranks.get(chunk_id)
+
+            hybrid_rrf = 0.0
+            if vector_rank is not None:
+                sources.append("vector")
+                hybrid_rrf += vector_weight / float(rrf_k + vector_rank)
+            if bm25_rank is not None:
+                sources.append("bm25")
+                hybrid_rrf += bm25_weight / float(rrf_k + bm25_rank)
+
+            bm25_chunk = bm25_by_id.get(chunk_id)
+            vector_chunk = vector_by_id.get(chunk_id)
+            bm25_score = float(bm25_chunk.score or 0.0) if bm25_chunk else 0.0
+            vector_score = float(vector_chunk.score or 0.0) if vector_chunk else 0.0
+
+            md["retrieval_sources"] = sources
+            if vector_rank is not None:
+                md["vector_rank"] = int(vector_rank)
+            if bm25_rank is not None:
+                md["bm25_rank"] = int(bm25_rank)
+                if bm25_chunk is not None:
+                    md["bm25_score"] = bm25_chunk.metadata.get("bm25_score")
+                    md["bm25_normalized_score"] = bm25_chunk.metadata.get(
+                        "bm25_normalized_score", round(bm25_score, 6)
+                    )
+            md["hybrid_rrf_score"] = round(float(hybrid_rrf), 6)
+
+            chunk.metadata = md
+            chunk.score = max(vector_score, bm25_score)
+            chunk.final_score = float(chunk.score)
+            merged.append(chunk)
+
+        merged.sort(
+            key=lambda c: (
+                float((c.metadata or {}).get("hybrid_rrf_score") or 0.0),
+                float(c.score or 0.0),
+            ),
+            reverse=True,
+        )
+
+        vector_ids = set(vector_by_id)
+        bm25_ids = set(bm25_by_id)
+        overlap = vector_ids & bm25_ids
+        summary = {
+            "vector_candidate_count": len(vector_candidates),
+            "bm25_candidate_count": len(bm25_candidates),
+            "hybrid_merged_candidate_count": len(merged),
+            "bm25_only_candidate_count": len(bm25_ids - vector_ids),
+            "vector_only_candidate_count": len(vector_ids - bm25_ids),
+            "overlap_candidate_count": len(overlap),
+        }
+        return merged, summary
 
     def _augment_with_children(
         self, ranked: List[RetrievedChunk], max_per_parent: int = 2
