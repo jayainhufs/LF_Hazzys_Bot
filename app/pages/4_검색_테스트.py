@@ -120,10 +120,13 @@ with col_kc1:
         "content_type 필터",
         ["전체", "normalized_document", "knowledge_card", "conversation", "text", "raw_table"],
         index=0,
+        format_func=lambda value: {
+            "knowledge_card": "정규화 문서 (legacy content_type)",
+        }.get(value, value),
         help=(
             "검색 결과를 content_type 으로 필터링한다 (UI 상에서만 적용). "
-            "신규 표준은 'normalized_document', 기존 색인 데이터는 'knowledge_card' 로 "
-            "저장되어 있을 수 있다."
+            "정규화 문서는 신규 표준 content_type 과 기존 색인 데이터의 legacy content_type 을 "
+            "모두 인식한다."
         ),
     )
 with col_kc2:

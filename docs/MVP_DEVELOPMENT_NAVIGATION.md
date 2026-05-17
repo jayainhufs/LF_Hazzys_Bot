@@ -508,7 +508,7 @@
 - `6_excel_summary.py`
 - `7_normalized_document_management.py`
 
-단, Step 6.5-1 에서는 파일명 변경을 하지 않고 계획만 기록한다.
+단, Step 6.5-5 까지는 파일명 변경을 하지 않고 계획만 기록한다.
 
 **reset_vector_db.py 개선 방향**
 
@@ -542,21 +542,26 @@
 - Step 6.5-1:
   - `MVP_DEVELOPMENT_NAVIGATION.md` 갱신.
   - 현재 단계와 Step 6.5 목표 반영.
+  - 완료.
 - Step 6.5-2:
   - Normalized Document schema 확장.
   - `doc_type` / `answer_use_cases` 필드 설계 및 테스트 추가.
   - legacy Knowledge Card 호환 유지.
+  - 완료.
 - Step 6.5-3:
   - Guide / Slack normalizer prompt 확장.
   - 신규 `doc_type` 과 `answer_use_cases` 생성 가능하게 변경.
+  - 완료.
 - Step 6.5-4:
   - Prompt Builder 답변 포맷 라우팅 확장.
   - `procedure` / `summary` / `troubleshooting` / `draft_message` / `compare` /
     `history_lookup` / `freeform_grounded` 대응.
+  - 완료.
 - Step 6.5-5:
   - 사용자-facing legacy 명칭 정리.
   - Knowledge Card / 지식카드 → Normalized Document / 정규화 문서.
   - UI 텍스트와 README 중심으로 정리.
+  - 완료.
 - Step 6.5-6:
   - Streamlit page 파일명 영문화 검토 및 필요 시 최소 단위로 변경.
   - 실제 rename 은 별도 커밋으로 분리.
@@ -570,7 +575,8 @@
 
 **현재 상태**
 
-- 🔄 진행 중.
+- ✅ Step 6.5-5 사용자-facing legacy 명칭 정리 완료.
+- 다음 작업은 Step 6.5-6 Streamlit page 파일명 영문화 검토다.
 
 ---
 

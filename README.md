@@ -226,7 +226,7 @@ LLM-based Document Normalization MVP 는 7 단계로 구현되어 있다 (모두
 | 2 | Guide document normalizer (LLM 호출 + cache) | `src/normalization/guide_normalizer.py` (`GuideDocumentNormalizer`), `normalization_prompt.py` |
 | 3 | Slack-style 스레드 document normalizer (LLM 호출 + cache) | `src/normalization/slack_normalizer.py` (`SlackThreadDocumentNormalizer`), `normalization_prompt.py` |
 | 4 | `ENABLE_LLM_NORMALIZATION` 옵션을 ingest pipeline 에 연결 | `src/normalization/pipeline_integration.py`, `src/pipeline.py` |
-| 5 | Streamlit 정규화 문서 관리 UI (read-only) | `app/pages/7_지식카드_관리.py` (UI 표시명: "정규화 문서 관리"), `src/normalization/card_viewer.py` |
+| 5 | Streamlit 정규화 문서 관리 UI (read-only) | 정규화 문서 관리 페이지 (현재 파일명은 legacy 한글명 유지), `src/normalization/card_viewer.py` |
 | 6 | 검색 단계 Normalized Document 우선 retrieval / reranker | `src/rag/reranker.py` (`apply_normalized_document_priority`), `src/rag/retriever.py` |
 | 7 | QA prompt 가 Normalized Document 를 1차 근거로 사용 | `src/rag/prompt_builder.py` (`build_normalized_document_answer_prompt`), `src/rag/qa_pipeline.py` |
 
@@ -356,7 +356,7 @@ Windows 추가 주의사항
 | `4_검색_테스트` (검색 테스트) | 답변 생성 없이 retrieval 결과만 확인. content_type / normalized_document_type 필터 제공 |
 | `5_API_상태확인` (API 상태 확인) | Gemini API Key / 모델 사용 가능 여부 점검 |
 | `6_Excel_요약관리` (Excel 요약 관리) | Excel 시트별 한국어 업무 요약 재생성 / 캐시 확인 |
-| `7_지식카드_관리` (정규화 문서 관리) | 생성된 Normalized Document JSON / Markdown 을 read-only 로 확인. 파일명은 한글 경로 호환을 위해 유지하되, UI 표시명은 "정규화 문서 관리" 로 변경되어 있다 |
+| 정규화 문서 관리 | 생성된 Normalized Document JSON / Markdown 을 read-only 로 확인. 현재 파일명은 한글 경로 호환을 위해 legacy 이름을 유지하되, UI 표시명은 "정규화 문서 관리" 로 통일되어 있다 |
 
 CLI 도 함께 제공한다.
 
@@ -393,8 +393,9 @@ python scripts/reset_vector_db.py           # ChromaDB / processed 초기화 (da
     한다 (`answer_mode=raw_fallback`).
   - 통과 chunk 자체가 부족하면 Gemini 호출 없이 "근거 부족" 메시지를 반환한다
     (`answer_mode=insufficient_evidence`).
-  - Normalized Document type 에 따라 답변 형식이 default / communication_template /
-    glossary 중 하나로 분기된다.
+  - Normalized Document type, `answer_use_cases`, 질문 의도에 따라 답변 형식이
+    procedure / summary / troubleshooting / draft_message / compare /
+    history_lookup / checklist / freeform_grounded 등으로 분기된다.
   - 답변과 참고 근거 모두에서 사람 실명 / @멘션 / 정확한 시간 / 원본 날짜를 노출하지 않도록
     prompt 와 비식별화 가드가 작동한다.
   - legacy 환경변수 `ANSWER_WITH_KNOWLEDGE_CARDS` / `MAX_PRIMARY_CARDS` 도 fallback 으로
