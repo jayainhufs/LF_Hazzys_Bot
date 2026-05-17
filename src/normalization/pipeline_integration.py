@@ -188,6 +188,9 @@ def normalized_documents_to_chunks(
             continue
 
         topic_tags_str = ",".join([t for t in (card.topic_tags or []) if isinstance(t, str) and t])
+        answer_use_cases_str = ",".join(
+            [u for u in (getattr(card, "answer_use_cases", []) or []) if isinstance(u, str) and u]
+        )
         parent_str = ",".join(
             [p for p in (card.parent_raw_chunk_ids or []) if isinstance(p, str) and p]
         )
@@ -210,6 +213,13 @@ def normalized_documents_to_chunks(
             # legacy ``"knowledge_card"`` 도 함께 인식한다.
             content_type="normalized_document",
             metadata={
+                "document_id": document_id,
+                "source_type": "llm_normalized",
+                "uploaded_category": card.source_category or "",
+                "source_category": card.source_category or "",
+                "file_name": card.source_file_name or "",
+                "source_file_name": card.source_file_name or "",
+                "content_type": "normalized_document",
                 # 신규 metadata 키 (권장)
                 "normalized_document_id": card.card_id or "",
                 "normalized_document_type": card.card_type or "",
@@ -218,6 +228,7 @@ def normalized_documents_to_chunks(
                 "card_type": card.card_type or "",
                 "primary_topic": card.primary_topic or "",
                 "topic_tags": topic_tags_str,
+                "answer_use_cases": answer_use_cases_str,
                 "task_type": card.task_type or "",
                 "document_date": card.document_date or "",
                 "display_date": card.display_date or "",

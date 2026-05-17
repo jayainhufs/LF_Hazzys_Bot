@@ -544,6 +544,13 @@ class TestKnowledgeCardsToChunks:
         assert "## 업무 절차" in chunk.content
 
         md = chunk.metadata
+        assert md["content_type"] == "normalized_document"
+        assert md["source_type"] == "llm_normalized"
+        assert md["document_id"] == "doc_test001"
+        assert md["file_name"] == "guide.txt"
+        assert md["source_file_name"] == "guide.txt"
+        assert md["uploaded_category"] == "guide"
+        assert md["source_category"] == "guide"
         # 신규 metadata 키
         assert md["normalized_document_id"] == "kc_aa11bb22_001_workflow"
         assert md["normalized_document_type"] == "workflow"
@@ -552,6 +559,7 @@ class TestKnowledgeCardsToChunks:
         assert md["card_type"] == "workflow"
         assert md["primary_topic"] == "meta"
         assert md["topic_tags"] == "meta,setup"
+        assert md["answer_use_cases"] == ""
         assert md["task_type"] == "setup"
         assert md["document_date"] == "2026-04-29"
         assert md["display_date"] == "해당 업무일"
@@ -753,6 +761,9 @@ class TestRunNormalizationBranchHappyPath:
         # 신규 metadata 키 (normalized_document_*) 와 legacy (card_*) 가 동시에 존재
         assert norm_chunk.metadata["normalized_document_type"] == "workflow"
         assert norm_chunk.metadata["card_type"] == "workflow"
+        assert norm_chunk.metadata["content_type"] == "normalized_document"
+        assert norm_chunk.metadata["source_type"] == "llm_normalized"
+        assert norm_chunk.metadata["answer_use_cases"] == "procedure,checklist"
         assert norm_chunk.metadata["primary_topic"] == "meta"
         assert "meta" in norm_chunk.metadata["topic_tags"]
         assert norm_chunk.metadata["task_type"] == "setup"
@@ -831,6 +842,9 @@ class TestRunNormalizationBranchHappyPath:
         assert norm_chunk.uploaded_category == "slack"
         assert norm_chunk.metadata["normalized_document_type"] == "issue"
         assert norm_chunk.metadata["card_type"] == "issue"
+        assert norm_chunk.metadata["content_type"] == "normalized_document"
+        assert norm_chunk.metadata["source_type"] == "llm_normalized"
+        assert norm_chunk.metadata["answer_use_cases"] == "troubleshooting,history_lookup"
         assert norm_chunk.metadata["primary_topic"] == "settlement"
         assert "settlement" in norm_chunk.metadata["topic_tags"]
         assert "issue" in norm_chunk.metadata["topic_tags"]

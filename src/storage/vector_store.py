@@ -38,6 +38,25 @@ def _coerce_metadata(md: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def _metadata_for_chunk(chunk: Chunk) -> Dict[str, Any]:
+    """Return Chroma metadata with Chunk top-level fields preserved."""
+    md: Dict[str, Any] = dict(chunk.metadata or {})
+    for key in (
+        "document_id",
+        "source_type",
+        "uploaded_category",
+        "file_name",
+        "content_type",
+        "parent_chunk_id",
+        "section_title",
+        "chunk_index",
+    ):
+        value = getattr(chunk, key, None)
+        if value is not None and key not in md:
+            md[key] = value
+    return md
+
+
 class VectorStore:
     """ChromaDB persistent 컬렉션 wrapper."""
 
@@ -100,7 +119,7 @@ class VectorStore:
 
         ids = [c.chunk_id for c in chunks]
         documents = [c.content for c in chunks]
-        metadatas = [_coerce_metadata(c.metadata) for c in chunks]
+        metadatas = [_coerce_metadata(_metadata_for_chunk(c)) for c in chunks]
 
         if skip_existing:
             already = self.existing_ids(ids)
