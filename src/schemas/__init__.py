@@ -5,6 +5,7 @@ from src.schemas.excel_summary import ExcelSummary
 from src.schemas.normalized_document import (
     KnowledgeCard,
     NormalizedDocument,
+    VALID_ANSWER_USE_CASES,
     VALID_CARD_TYPES,
     VALID_NORMALIZED_DOCUMENT_TYPES,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "KnowledgeCard",
     "VALID_NORMALIZED_DOCUMENT_TYPES",
     "VALID_CARD_TYPES",
+    "VALID_ANSWER_USE_CASES",
     "Chunk",
     "RetrievedChunk",
     "QALog",
