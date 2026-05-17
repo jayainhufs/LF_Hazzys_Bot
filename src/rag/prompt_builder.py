@@ -327,8 +327,8 @@ NORMALIZED_DOCUMENT_PRINCIPLES = """## 답변 원칙 (Normalized Document 중심
 KNOWLEDGE_CARD_SYSTEM_INSTRUCTION = NORMALIZED_DOCUMENT_SYSTEM_INSTRUCTION
 KNOWLEDGE_CARD_PRINCIPLES = NORMALIZED_DOCUMENT_PRINCIPLES
 
-# 기본 답변 형식 (workflow / checklist / issue / decision / faq)
-DEFAULT_ANSWER_FORMAT = """반드시 아래 형식을 그대로 따라 한국어로 답변하라.
+# 절차형 답변 형식 (기존 default 구조 유지)
+PROCEDURE_ANSWER_FORMAT = """반드시 아래 형식을 그대로 따라 한국어로 답변하라.
 
 ## 1. 결론
 - 질문에 대한 핵심 답변 1~3줄. 주 근거 정규화 문서의 summary / when_to_use 를 우선 반영하라.
@@ -374,24 +374,50 @@ DEFAULT_ANSWER_FORMAT = """반드시 아래 형식을 그대로 따라 한국어
 - 주 근거가 비어 있어 raw fallback 만 사용했다면 그 사실을 명시한다.
 - "근거가 부족해 단정할 수 없습니다" 같은 표현을 적극적으로 사용한다."""
 
-# 문안 / 광고주 공유 (communication_template) 형식
-COMMUNICATION_ANSWER_FORMAT = """반드시 아래 형식을 그대로 따라 한국어로 답변하라.
+# legacy alias — 기존 import / 테스트 호환
+DEFAULT_ANSWER_FORMAT = PROCEDURE_ANSWER_FORMAT
 
-## 1. 결론
-- 어떤 상황에 어떤 톤으로 어떤 핵심 메시지를 전달해야 하는지 1~3줄.
+SUMMARY_ANSWER_FORMAT = """반드시 아래 형식을 그대로 따라 한국어로 답변하라.
 
-## 2. 바로 사용할 수 있는 초안
-- 정규화 문서의 steps / examples / template 본문을 정리해 사용 가능한 문안 초안을 제시한다.
+## 1. 핵심 요약
+- 질문과 가장 관련 있는 내용을 3~5줄로 요약한다.
+
+## 2. 현재 상황
+- 정규화 문서의 summary / when_to_use / status 성격의 내용을 바탕으로 현재 맥락을 정리한다.
+
+## 3. 주요 포인트
+- 의사결정, 진행 상태, 참고 기준, 이슈 등 핵심 포인트를 bullet 로 정리한다.
+
+## 4. 확인 필요사항
+- 근거에 없거나 추가 확인이 필요한 내용을 정직하게 적는다."""
+
+TROUBLESHOOTING_ANSWER_FORMAT = """반드시 아래 형식을 그대로 따라 한국어로 답변하라.
+
+## 1. 가능한 원인
+- 정규화 문서와 근거에 명시된 원인 후보만 정리한다.
+
+## 2. 확인해야 할 것
+- 먼저 확인할 화면/항목/담당자/자료를 체크리스트 형태로 적는다.
+
+## 3. 대응 순서
+- 실제 처리 순서를 1) 2) 3) 형식으로 정리한다.
+
+## 4. 재발 방지 포인트
+- 같은 문제가 반복되지 않도록 주의할 점을 근거 기반으로 적는다."""
+
+DRAFT_MESSAGE_ANSWER_FORMAT = """반드시 아래 형식을 그대로 따라 한국어로 답변하라.
+
+## 1. 바로 보낼 문안
+- 광고주/매체/내부 공유에 바로 사용할 수 있는 문안 초안을 작성한다.
 - 사람 실명, @멘션, 정확한 시간, 원본 날짜는 빼고 역할 표현 / 업무일 라벨로 대체한다.
 
-## 3. 문안 작성 포인트
-- 어떤 정보를 반드시 포함해야 하는지, 어떤 표현을 피해야 하는지.
-- 정규화 문서의 cautions / when_to_use / prerequisites 를 우선 반영.
+## 2. 조금 더 부드러운 문안
+- 같은 내용을 더 완곡하고 협업 친화적인 톤으로 다시 작성한다.
 
-## 4. 주의사항
-- 광고주/매체/내부 공유 톤 차이, 금액/일정 표기 시 주의점, 익명화 원칙 등.
+## 3. 내부 참고 메모
+- 문안을 보낼 때 내부적으로 확인해야 할 정보와 주의사항을 정리한다.
 
-## 5. 참고 근거
+## 4. 참고 근거
 [주 근거: Normalized Document]
 - title:
 - normalized_document_type:
@@ -406,8 +432,66 @@ COMMUNICATION_ANSWER_FORMAT = """반드시 아래 형식을 그대로 따라 한
 - content_type:
 - chunk_index 또는 parent_raw_chunk_ids:
 
-## 6. 불확실한 부분
+## 5. 불확실한 부분
 - 정규화 문서/근거에 명시되지 않은 항목, 추가 확인이 필요한 내용을 정직하게 적는다."""
+
+COMPARE_ANSWER_FORMAT = """반드시 아래 형식을 그대로 따라 한국어로 답변하라.
+
+## 1. 비교 기준
+- 근거에서 확인되는 판단 기준을 먼저 정리한다.
+
+## 2. A안 / 선택지 1
+- 첫 번째 선택지의 장점, 리스크, 적용 조건을 정리한다.
+
+## 3. B안 / 선택지 2
+- 두 번째 선택지의 장점, 리스크, 적용 조건을 정리한다.
+
+## 4. 추천 판단
+- 근거에 기반해 어느 쪽이 더 적절한지 조심스럽게 판단한다.
+
+## 5. 확인 필요사항
+- 근거가 부족하거나 추가 확인이 필요한 조건을 적는다."""
+
+HISTORY_LOOKUP_ANSWER_FORMAT = """반드시 아래 형식을 그대로 따라 한국어로 답변하라.
+
+## 1. 과거 유사 케이스
+- 정규화 문서와 근거에서 찾을 수 있는 유사 사례를 요약한다.
+
+## 2. 당시 처리 방식
+- 당시 어떤 방식으로 처리했는지 정리한다.
+
+## 3. 현재 적용 시 참고점
+- 지금 업무에 적용할 때 참고할 점과 달라질 수 있는 점을 적는다.
+
+## 4. 불확실한 부분
+- 과거 사례와 현재 상황이 다를 수 있는 부분을 명시한다."""
+
+CHECKLIST_ANSWER_FORMAT = """반드시 아래 형식을 그대로 따라 한국어로 답변하라.
+
+## 1. 체크리스트
+- [ ] 확인 항목1
+- [ ] 확인 항목2
+- [ ] 확인 항목3
+
+## 2. 우선순위
+- 먼저 확인할 항목과 나중에 확인해도 되는 항목을 나눈다.
+
+## 3. 누락 주의사항
+- 누락되기 쉬운 항목과 확인 시 주의할 점을 적는다."""
+
+FREEFORM_GROUNDED_ANSWER_FORMAT = """반드시 아래 형식을 그대로 따라 한국어로 답변하라.
+
+## 1. 답변
+- 질문에 대한 답을 근거 기반으로 자연스럽게 정리한다.
+
+## 2. 근거
+- 어떤 Normalized Document / Raw Evidence 를 바탕으로 답했는지 요약한다.
+
+## 3. 불확실한 부분
+- 근거에 없거나 단정할 수 없는 부분을 적는다."""
+
+# legacy alias — communication_template 특수 포맷은 문안 작성 포맷으로 유지
+COMMUNICATION_ANSWER_FORMAT = DRAFT_MESSAGE_ANSWER_FORMAT
 
 # 용어 설명 (glossary) 형식
 GLOSSARY_ANSWER_FORMAT = """반드시 아래 형식을 그대로 따라 한국어로 답변하라.
@@ -522,6 +606,7 @@ def _format_card_metadata_block(
         f"- primary_topic: {md.get('primary_topic') or '-'}\n"
         f"- topic_tags: {md.get('topic_tags') or []}\n"
         f"- task_type: {md.get('task_type') or '-'}\n"
+        f"- answer_use_cases: {md.get('answer_use_cases') or '-'}\n"
         f"- source_file_name: {card.file_name or '-'}\n"
         f"- source_category: {card.uploaded_category or '-'}\n"
         f"- display_date: {_display_date_for(card)}\n"
@@ -605,6 +690,88 @@ def format_raw_evidence_appendix(
     return used, blocks
 
 
+_ANSWER_FORMAT_BY_USE_CASE: Dict[str, str] = {
+    "procedure": PROCEDURE_ANSWER_FORMAT,
+    "summary": SUMMARY_ANSWER_FORMAT,
+    "troubleshooting": TROUBLESHOOTING_ANSWER_FORMAT,
+    "draft_message": DRAFT_MESSAGE_ANSWER_FORMAT,
+    "compare": COMPARE_ANSWER_FORMAT,
+    "history_lookup": HISTORY_LOOKUP_ANSWER_FORMAT,
+    "checklist": CHECKLIST_ANSWER_FORMAT,
+    "freeform_grounded": FREEFORM_GROUNDED_ANSWER_FORMAT,
+}
+
+_DOCUMENT_TYPE_TO_USE_CASE: Dict[str, str] = {
+    "workflow": "procedure",
+    "checklist": "checklist",
+    "issue": "troubleshooting",
+    "issue_log": "troubleshooting",
+    "decision": "compare",
+    "decision_log": "compare",
+    "communication_template": "draft_message",
+    "reference_note": "freeform_grounded",
+    "status_update": "summary",
+    "campaign_summary": "summary",
+    "context_note": "summary",
+    "action_item": "checklist",
+    "communication_history": "history_lookup",
+    "report_insight": "summary",
+}
+
+
+def _normalize_answer_use_cases(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        items = value.replace("|", ",").split(",")
+    elif isinstance(value, (list, tuple, set)):
+        items = list(value)
+    else:
+        return []
+    out: List[str] = []
+    for item in items:
+        val = str(item or "").strip().lower()
+        if val in _ANSWER_FORMAT_BY_USE_CASE and val not in out:
+            out.append(val)
+    return out
+
+
+def _answer_use_cases_from_content(content: str) -> List[str]:
+    for line in (content or "").splitlines():
+        if "answer_use_cases:" not in line:
+            continue
+        _, raw_value = line.split("answer_use_cases:", 1)
+        return _normalize_answer_use_cases(raw_value)
+    return []
+
+
+def _detect_answer_intent(question: str) -> Optional[str]:
+    q = (question or "").lower()
+    if not q.strip():
+        return None
+    if any(k in q for k in ("문안", "보낼 말", "메일", "슬랙", "공유문", "회신", "광고주에게")):
+        return "draft_message"
+    if any(k in q for k in ("오류", "문제", "이슈", "안돼", "안 돼", "실패", "원인", "대응")):
+        return "troubleshooting"
+    if any(k in q for k in ("비교", "차이", "a안", "b안", "뭐가 나아", "추천")):
+        return "compare"
+    if any(k in q for k in ("예전에", "과거", "이전", "전에", "히스토리", "비슷한 케이스")):
+        return "history_lookup"
+    if any(k in q for k in ("체크리스트", "확인할 것", "점검", "누락")):
+        return "checklist"
+    if any(k in q for k in ("요약", "정리", "핵심", "현재 상황", "한눈에")):
+        return "summary"
+    if any(k in q for k in ("방법", "절차", "어떻게", "세팅", "셋팅", "진행", "처리 순서")):
+        return "procedure"
+    return None
+
+
+def _format_for_use_case(use_case: str) -> Tuple[str, str]:
+    return _ANSWER_FORMAT_BY_USE_CASE.get(
+        use_case, FREEFORM_GROUNDED_ANSWER_FORMAT
+    ), use_case
+
+
 def select_answer_format(
     primary_cards: List[RetrievedChunk],
     question: str,
@@ -619,6 +786,7 @@ def select_answer_format(
     """
     q = (question or "").lower()
     types: List[str] = []
+    answer_use_cases: List[str] = []
     for c in primary_cards or []:
         md = c.metadata or {}
         # 신규 우선, 없으면 legacy fallback
@@ -627,14 +795,29 @@ def select_answer_format(
         ).lower()
         if ct:
             types.append(ct)
+        for use_case in _normalize_answer_use_cases(md.get("answer_use_cases")):
+            if use_case not in answer_use_cases:
+                answer_use_cases.append(use_case)
+        for use_case in _answer_use_cases_from_content(c.content or ""):
+            if use_case not in answer_use_cases:
+                answer_use_cases.append(use_case)
 
     if "glossary" in types or any(k in q for k in ("용어", "무슨 뜻", "정의")):
         return GLOSSARY_ANSWER_FORMAT, "glossary"
-    if "communication_template" in types or any(
-        k in q for k in ("문안", "메일", "공유", "전달", "회신")
-    ):
-        return COMMUNICATION_ANSWER_FORMAT, "communication_template"
-    return DEFAULT_ANSWER_FORMAT, "default"
+
+    query_intent = _detect_answer_intent(question)
+    if query_intent:
+        return _format_for_use_case(query_intent)
+
+    if answer_use_cases:
+        return _format_for_use_case(answer_use_cases[0])
+
+    for doc_type in types:
+        use_case = _DOCUMENT_TYPE_TO_USE_CASE.get(doc_type)
+        if use_case:
+            return _format_for_use_case(use_case)
+
+    return FREEFORM_GROUNDED_ANSWER_FORMAT, "freeform_grounded"
 
 
 def build_normalized_document_answer_prompt(

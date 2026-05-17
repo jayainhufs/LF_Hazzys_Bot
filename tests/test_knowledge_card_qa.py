@@ -20,11 +20,19 @@ import pytest
 
 from src.config import settings
 from src.rag.prompt_builder import (
+    CHECKLIST_ANSWER_FORMAT,
     COMMUNICATION_ANSWER_FORMAT,
+    COMPARE_ANSWER_FORMAT,
     DEFAULT_ANSWER_FORMAT,
+    DRAFT_MESSAGE_ANSWER_FORMAT,
+    FREEFORM_GROUNDED_ANSWER_FORMAT,
     GLOSSARY_ANSWER_FORMAT,
+    HISTORY_LOOKUP_ANSWER_FORMAT,
     KNOWLEDGE_CARD_PRINCIPLES,
     KNOWLEDGE_CARD_SYSTEM_INSTRUCTION,
+    PROCEDURE_ANSWER_FORMAT,
+    SUMMARY_ANSWER_FORMAT,
+    TROUBLESHOOTING_ANSWER_FORMAT,
     build_knowledge_card_answer_prompt,
     build_qa_prompt,
     select_answer_format,
@@ -101,6 +109,7 @@ def _make_kc_chunk(
     parent_raw_chunk_ids: Optional[List[str]] = None,
     uploaded_category: str = "guide",
     sanitized_content: Optional[str] = None,
+    answer_use_cases: Optional[List[str]] = None,
 ) -> RetrievedChunk:
     md: Dict[str, Any] = {
         "source_weight": float(settings.normalization_card_source_weight),
@@ -117,6 +126,7 @@ def _make_kc_chunk(
         "parent_raw_chunk_ids": list(parent_raw_chunk_ids or []),
         "title": title,
         "retrieval_role": "primary_card",
+        "answer_use_cases": list(answer_use_cases or []),
         "knowledge_card_boost": float(settings.knowledge_card_content_boost),
         "card_type_boost": 1.30,
         "card_type_match": True,
@@ -267,14 +277,16 @@ def test_select_answer_format_communication_for_template_card():
         )
     ]
     fmt, label = select_answer_format(cards, "광고주 공유 문안 작성해줘")
-    assert label == "communication_template"
+    assert label == "draft_message"
+    assert fmt == DRAFT_MESSAGE_ANSWER_FORMAT
     assert fmt == COMMUNICATION_ANSWER_FORMAT
 
 
 def test_select_answer_format_default_for_workflow_card():
     cards = [_make_kc_chunk(chunk_id="kc1", file_name="w.txt", card_type="workflow")]
     fmt, label = select_answer_format(cards, "메타 셋팅 가이드 알려줘")
-    assert label == "default"
+    assert label == "procedure"
+    assert fmt == PROCEDURE_ANSWER_FORMAT
     assert fmt == DEFAULT_ANSWER_FORMAT
 
 
@@ -284,6 +296,86 @@ def test_select_answer_format_keyword_overrides_when_no_card_type():
     fmt, label = select_answer_format(cards, "BAU 용어 정의 알려줘")
     assert label == "glossary"
     assert fmt == GLOSSARY_ANSWER_FORMAT
+
+
+def test_select_answer_format_summary_for_summary_question():
+    cards = [_make_kc_chunk(chunk_id="kc1", file_name="s.txt", card_type="status_update")]
+    fmt, label = select_answer_format(cards, "핵심만 요약해줘")
+    assert label == "summary"
+    assert fmt == SUMMARY_ANSWER_FORMAT
+
+
+def test_select_answer_format_draft_message_for_message_question():
+    cards = [_make_kc_chunk(chunk_id="kc1", file_name="m.txt", card_type="workflow")]
+    fmt, label = select_answer_format(cards, "광고주에게 보낼 문안 작성해줘")
+    assert label == "draft_message"
+    assert fmt == DRAFT_MESSAGE_ANSWER_FORMAT
+
+
+def test_select_answer_format_troubleshooting_for_issue_question():
+    cards = [_make_kc_chunk(chunk_id="kc1", file_name="i.txt", card_type="issue_log")]
+    fmt, label = select_answer_format(cards, "오류가 나면 뭐부터 확인해야 해?")
+    assert label == "troubleshooting"
+    assert fmt == TROUBLESHOOTING_ANSWER_FORMAT
+
+
+def test_select_answer_format_compare_for_compare_question():
+    cards = [_make_kc_chunk(chunk_id="kc1", file_name="d.txt", card_type="decision")]
+    fmt, label = select_answer_format(cards, "A안과 B안 비교해줘")
+    assert label == "compare"
+    assert fmt == COMPARE_ANSWER_FORMAT
+
+
+def test_select_answer_format_history_lookup_for_history_question():
+    cards = [
+        _make_kc_chunk(
+            chunk_id="kc1", file_name="h.txt", card_type="communication_history"
+        )
+    ]
+    fmt, label = select_answer_format(cards, "과거에 비슷한 케이스 있었어?")
+    assert label == "history_lookup"
+    assert fmt == HISTORY_LOOKUP_ANSWER_FORMAT
+
+
+def test_select_answer_format_uses_answer_use_cases_when_query_intent_unclear():
+    cards = [
+        _make_kc_chunk(
+            chunk_id="kc1",
+            file_name="u.txt",
+            card_type="context_note",
+            answer_use_cases=["history_lookup", "freeform_grounded"],
+        )
+    ]
+    fmt, label = select_answer_format(cards, "이 내용 알려줘")
+    assert label == "history_lookup"
+    assert fmt == HISTORY_LOOKUP_ANSWER_FORMAT
+
+
+def test_select_answer_format_uses_query_intent_before_answer_use_cases():
+    cards = [
+        _make_kc_chunk(
+            chunk_id="kc1",
+            file_name="u.txt",
+            card_type="context_note",
+            answer_use_cases=["summary"],
+        )
+    ]
+    fmt, label = select_answer_format(cards, "A안과 B안 비교해줘")
+    assert label == "compare"
+    assert fmt == COMPARE_ANSWER_FORMAT
+
+
+def test_select_answer_format_doc_type_fallbacks_for_new_types():
+    cases = [
+        ("action_item", "checklist", CHECKLIST_ANSWER_FORMAT),
+        ("report_insight", "summary", SUMMARY_ANSWER_FORMAT),
+        ("reference_note", "freeform_grounded", FREEFORM_GROUNDED_ANSWER_FORMAT),
+    ]
+    for card_type, expected_label, expected_format in cases:
+        cards = [_make_kc_chunk(chunk_id=f"kc_{card_type}", file_name="x.txt", card_type=card_type)]
+        fmt, label = select_answer_format(cards, "이 내용 알려줘")
+        assert label == expected_label
+        assert fmt == expected_format
 
 
 # ---------------------------------------------------------------------------
@@ -310,7 +402,7 @@ def test_prompt_has_primary_card_section_before_raw_evidence():
         question="메타 캠페인 셋팅 가이드 알려줘",
         chunks=cards + raw,
     )
-    assert label == "default"
+    assert label == "procedure"
     # 섹션 헤더 (markdown ##) 기준으로 위치 비교
     assert "## 주 근거 (Normalized Document)" in prompt
     assert "## 보조 근거 (Raw Evidence)" in prompt
@@ -344,7 +436,7 @@ def test_prompt_uses_default_format_for_workflow_card():
     prompt, _used, label = build_knowledge_card_answer_prompt(
         question="메타 셋팅 가이드", chunks=cards
     )
-    assert label == "default"
+    assert label == "procedure"
     assert "업무 처리 순서 또는 핵심 체크포인트" in prompt
     assert "체크리스트" in prompt
     assert COMMUNICATION_ANSWER_FORMAT not in prompt
@@ -361,9 +453,9 @@ def test_prompt_uses_communication_format_for_template_card():
     prompt, _used, label = build_knowledge_card_answer_prompt(
         question="광고주 공유 문안 작성해줘", chunks=cards
     )
-    assert label == "communication_template"
-    assert "바로 사용할 수 있는 초안" in prompt
-    assert "문안 작성 포인트" in prompt
+    assert label == "draft_message"
+    assert "바로 보낼 문안" in prompt
+    assert "조금 더 부드러운 문안" in prompt
 
 
 def test_prompt_uses_glossary_format_for_glossary_card():
@@ -406,7 +498,7 @@ def test_prompt_omits_raw_appendix_when_disabled(monkeypatch):
     prompt, used, label = build_knowledge_card_answer_prompt(
         question="셋팅 가이드", chunks=cards + raw
     )
-    assert label == "default"
+    assert label == "procedure"
     # 섹션 헤더 형태로만 검증 (system instruction 본문에는 인용 문자열이 등장할 수 있음)
     assert "## 보조 근거 (Raw Evidence)" not in prompt
     assert "## Raw Fallback" not in prompt
