@@ -1,14 +1,16 @@
 # Work RAG Assistant
 
-> 사내 업무 문서를 로컬에서 색인하고 한국어로 질의응답하는 **로컬 RAG (Retrieval Augmented
-> Generation) 챗봇** 프로토타입. 외부 Vector DB 나 SaaS 를 사용하지 않고, 모든 원본 자료와
-> 색인 결과는 로컬 디스크에 저장된다. 기본 RAG 기능의 외부 호출은 답변/요약/임베딩 시점의
-> **Google Gemini API** 중심으로 제한된다. 단, 선택 기능인 Slack QA Bot 을 활성화하면 Slack
-> 메시지 수신/답변을 위해 **Slack API (Socket Mode)** 를 추가로 사용한다.
+> 브랜드 운영 업무를 보조하는 **Local RAG 기반 Generalized Work Assistant MVP**.
+> Guide / Slack Thread / Kakao / Excel 자료를 로컬에서 색인하고, 업무 맥락을 기반으로
+> 절차 안내, 요약, 문안 작성, 이슈 대응, 비교 판단, 히스토리 조회를 한국어로 답변한다.
+> 외부 Vector DB 나 SaaS 를 사용하지 않고, 모든 원본 자료와 색인 결과는 로컬 디스크에
+> 저장된다. 기본 RAG 기능의 외부 호출은 답변/요약/임베딩 시점의 **Google Gemini API**
+> 중심으로 제한된다. 단, 선택 기능인 Slack QA Bot 을 활성화하면 Slack 메시지 수신/답변을
+> 위해 **Slack API (Socket Mode)** 를 추가로 사용한다.
 
 이 저장소는 **공개용 코드/설정/예시** 만 포함한다. 회사 / 광고주 / 매체사 / 사람 이름 같은
 실제 업무 데이터는 어떤 형태로도 저장소에 포함되지 않는다 (자세한 내용은 [Security & Privacy
-Notes](#security--privacy-notes) 참고).
+Notes](#12-security--privacy-notes) 참고).
 
 ---
 
@@ -25,25 +27,27 @@ Notes](#security--privacy-notes) 참고).
 9. [Streamlit 페이지 설명](#9-streamlit-페이지-설명)
 10. [임베딩 / 검색 / 답변 옵션](#10-임베딩--검색--답변-옵션)
 11. [테스트 명령어](#11-테스트-명령어)
-12. [Security & Privacy Notes](#security--privacy-notes)
-13. [현재 미지원 기능](#12-현재-미지원-기능)
-14. [향후 확장 계획](#13-향후-확장-계획)
-15. [Slack QA Bot (선택 기능)](#14-slack-qa-bot-선택-기능)
+12. [Security & Privacy Notes](#12-security--privacy-notes)
+13. [현재 미지원 기능](#13-현재-미지원-기능)
+14. [향후 확장 계획](#14-향후-확장-계획)
+15. [Slack QA Bot (선택 기능)](#15-slack-qa-bot-선택-기능)
+16. [현재 MVP 상태 요약](#16-현재-mvp-상태-요약)
+17. [라이선스 / 책임 범위](#17-라이선스--책임-범위)
 
 ---
 
 ## 1. 프로젝트 개요
 
 - 사용자가 자신의 업무 문서(가이드, 메신저 스레드 텍스트, 메일/카톡 내보내기, Excel 등)를
-  로컬에 적재하면, 자연어 질문에 대해 단계별 절차 / 체크리스트 / 참고 근거를 한국어로
-  답변하는 RAG 챗봇이다.
+  로컬에 적재하면, 자연어 질문에 대해 업무 절차 / 체크리스트 / 상황 요약 / 공유 문안 /
+  이슈 대응 / 과거 사례 조회를 한국어로 답변하는 운영 업무 Assistant 다.
 - **핵심 차별점 — LLM-based Document Normalization**
   - raw 업무 문서를 그대로 embedding 하는 단순 RAG 구조가 아니라, ingestion 단계에서 LLM 으로
     한 번 더 구조화하여 검색과 QA 에 적합한 **Normalized Document** (정규화 문서) 를 생성한 뒤
     이를 1차 근거로 활용한다.
-  - **Normalized Document** 는 업무 절차 (workflow), 체크리스트 (checklist), 이슈 (issue),
-    FAQ, 공유 문안 (communication_template), 용어 (glossary), 운영 판단 (decision) 등으로
-    구조화된 문서 단위다.
+  - **Normalized Document** 는 업무 절차, 체크리스트, 이슈, FAQ, 결정사항, 공유 문안,
+    용어, 상황 메모, 진행 상태, 액션 아이템, 커뮤니케이션 히스토리 등으로 구조화된 문서
+    단위다.
   - **Raw Chunk** 는 원문 기반 보조 근거 또는 fallback 으로 함께 유지되어, 정규화 결과만으로
     답변이 어렵거나 LLM 정규화가 OFF 인 경우에도 RAG 가 동작한다.
 - 설계 원칙
@@ -143,15 +147,16 @@ app/
 > 기본으로 한다. Slack QA Bot 은 별도 선택 기능이며, Slack 에서 질문을 받아 기존 QA Pipeline
 > 을 호출하는 사용자 질문 인터페이스 역할만 수행한다.
 
-PDF / 이미지 OCR / Hybrid Retrieval / 자동 폴더 watcher 등은 현재 MVP 에서 지원하지 않는다.
-([미지원 기능](#12-현재-미지원-기능) 참고)
+PDF 파싱 / 이미지 OCR / 자동 폴더 watcher 등은 현재 MVP 에서 지원하지 않는다.
+([미지원 기능](#13-현재-미지원-기능) 참고)
 
 ---
 
 ## 4. LLM-based Document Normalization 아키텍처
 
 **LLM-based Document Normalization** 은 raw 업무 문서를 LLM 으로 절차 / 체크리스트 / 이슈 /
-FAQ / 공유 문안 등 검색·QA 친화적 구조로 정규화하는 **ingestion-time preprocessing 단계**다.
+FAQ / 공유 문안 / 상황 메모 / 히스토리 등 검색·QA 친화적 구조로 정규화하는
+**ingestion-time preprocessing 단계**다.
 raw chunk 색인 흐름과는 **별도의 병렬 branch** 로 동작한다 — raw chunk 를 대체하는 것이
 아니라, 같은 입력으로부터 별도의 Normalized Document 를 생성해 **함께** 색인한다.
 
@@ -163,11 +168,13 @@ raw chunk 색인 흐름과는 **별도의 병렬 branch** 로 동작한다 — r
 [Raw Chunk 생성]                  [(옵션) LLM-based Document Normalization]
         │                                  │
         │                                  ├─ Guide       → workflow / checklist / faq /
-        │                                  │                glossary / communication_template /
-        │                                  │                decision
-        │                                  └─ Slack-style → issue / decision / checklist /
-        │                                                   communication_template / faq /
-        │                                                   workflow
+        │                                  │                glossary / reference_note /
+        │                                  │                communication_template /
+        │                                  │                campaign_summary / context_note
+        │                                  └─ Slack-style → status_update / action_item /
+        │                                                   issue_log / decision_log /
+        │                                                   communication_history /
+        │                                                   communication_template
         │                                  ↓
         │                  [NormalizationStore  ./data/processed/normalized/{json,markdown}]
         │                  file_hash + prompt_version + model_name cache → 중복 호출 방지
@@ -193,26 +200,55 @@ raw chunk 색인 흐름과는 **별도의 병렬 branch** 로 동작한다 — r
 - **Raw Chunk 는 보조 근거 / fallback.** Normalized Document 가 없거나 부족할 때 raw evidence
   로 보강하거나, 정규화가 OFF 일 때 fallback 으로 사용된다.
 
-`NormalizedDocument` 의 type 은 다음 중 하나다.
+`NormalizedDocument` 의 `doc_type` / legacy `card_type` 은 다음 값을 지원한다.
+
+기존 타입:
 
 - `workflow` — 반복 가능한 업무 절차
 - `checklist` — 확인 항목 중심
+- `issue` — 이슈 상황 / 원인 / 대응
 - `faq` — 자주 묻는 질문
 - `decision` — 운영 판단 / 방향
-- `glossary` — 용어 정의
 - `communication_template` — 광고주 / 매체사 / 내부 공유 문안
-- `issue` — 이슈 상황 / 원인 / 대응
+- `glossary` — 용어 정의
 
-각 Normalized Document 의 metadata 에는 `normalized_document_id`,
-`normalized_document_type`, `primary_topic`, `topic_tags`, `task_type`, `document_date`,
-`display_date`, `parent_raw_chunk_ids` 등이 함께 저장되어 검색 우선순위와 답변 근거 분리에
-사용된다.
+Normalized Document v1.5 추가 타입:
+
+- `context_note` — 업무 배경 / 운영 기준 / 참고 상황
+- `status_update` — 특정 날짜나 스레드 기준 진행 상태
+- `action_item` — 해야 할 일 / 후속 조치 / 확인 필요 작업
+- `issue_log` — 이슈 발생 / 원인 / 대응 / 결과 흐름
+- `decision_log` — 결정 배경 / 선택지 / 결정 이유 / 이력
+- `campaign_summary` — 캠페인 목적 / 매체 / 광고상품 / 세팅 현황 요약
+- `communication_history` — 광고주 / 매체사 / 내부 커뮤니케이션 흐름
+- `reference_note` — 단순 참고사항 / 운영 기준 / 링크성 지식 / 기준표
+- `report_insight` — 리포트 / 성과 데이터 해석과 주요 인사이트
+
+또한 `answer_use_cases` 로 답변 활용 목적을 함께 저장한다.
+
+- `procedure`
+- `summary`
+- `troubleshooting`
+- `draft_message`
+- `compare`
+- `history_lookup`
+- `checklist`
+- `freeform_grounded`
+
+각 Normalized Document 의 metadata 에는 `content_type=normalized_document`,
+`source_type=llm_normalized`, `normalized_document_id`, `normalized_document_type`,
+`card_type`, `answer_use_cases`, `primary_topic`, `topic_tags`, `task_type`,
+`document_date`, `display_date`, `parent_raw_chunk_ids` 등이 함께 저장되어 검색 우선순위와
+답변 근거 분리에 사용된다.
 
 > **Backward compatibility**: 과거에 색인된 데이터는 `content_type="knowledge_card"` /
 > `card_id` / `card_type` 으로 저장되어 있을 수 있다. retriever / reranker / qa pipeline
 > 은 신규 (`normalized_document` / `normalized_document_id` / `normalized_document_type`)
 > 와 legacy 키를 모두 인식하므로 기존 저장 데이터를 다시 색인하지 않아도 그대로 동작한다.
 > 새로 색인되는 chunk 는 신규 표준을 사용한다.
+> 사용자-facing 용어는 **Normalized Document / 정규화 문서** 로 통일한다. 다만 내부 호환을
+> 위해 `KnowledgeCard` alias, `knowledge_card.py`, `answer_mode="knowledge_card"` 같은
+> 코드 레벨 이름은 유지될 수 있다.
 
 ---
 
@@ -306,9 +342,9 @@ scripts\run_app.bat
 
 Windows 추가 주의사항
 
-- `app/pages/` 에는 한글 파일명이 포함되어 있다. Python 3.11 + Streamlit 1.10+ 에서 한글
-  파일명을 정상 지원하지만, 콘솔이 깨지면 PowerShell 사용 또는 `chcp 65001` 로 UTF-8 콘솔
-  전환 권장.
+- `app/pages/` 파일명은 Windows / Git / CLI 작업 안정성을 위해 영문으로 정리되어 있다.
+  UI 표시명은 계속 한국어로 유지한다.
+- 콘솔 한글 출력이 깨지면 PowerShell 사용 또는 `chcp 65001` 로 UTF-8 콘솔 전환을 권장한다.
 - `python` 이 인식되지 않는 환경에서는 `py -3.11` 로 대체할 수 있다.
 - 회사 PC 의 보안 정책상 PyPI 접근이 차단된 경우, 사내 미러 또는 오프라인 wheel 패키지 사용을
   검토.
@@ -332,6 +368,7 @@ Windows 추가 주의사항
 | `MAX_CHUNKS_PER_FILE` / `USE_MMR` / `MMR_LAMBDA` | 다양성 / 파일별 cap | `.env.example` 참고 |
 | `ENABLE_DATE_FILTER` / `DATE_EXACT_MATCH_BOOST` / `DATE_MISMATCH_PENALTY` | 날짜 인식 검색 | `.env.example` 참고 |
 | `TOPIC_MATCH_BOOST` / `TOPIC_MISMATCH_PENALTY` | 토픽 인식 검색 | `.env.example` 참고 |
+| `HYBRID_RETRIEVAL_ENABLED` / `HYBRID_BM25_TOP_K` / `HYBRID_RRF_K` 등 | optional Vector + BM25 hybrid retrieval | `false` |
 | `ANONYMIZE_OUTPUT` 등 비식별화 토글 | UI / 답변 비식별화 | `.env.example` 참고 |
 | `ENABLE_LLM_NORMALIZATION` | LLM-based Document Normalization ON/OFF (기본 OFF) | `false` |
 | `LLM_DOCUMENT_NORMALIZATION_MODEL` (legacy: `LLM_NORMALIZATION_MODEL`) | 정규화에 사용할 Gemini 모델 | `.env.example` 참고 |
@@ -365,8 +402,53 @@ python scripts/ingest_folder.py             # 폴더 일괄 색인
 python scripts/ingest_folder.py --enable-summary
 python scripts/ingest_folder.py --no-skip
 python scripts/summarize_excel_folder.py    # Excel 요약 일괄 생성
-python scripts/reset_vector_db.py           # ChromaDB / processed 초기화 (data/raw 는 보존)
+python scripts/reset_vector_db.py           # soft reset (data/raw 는 보존)
 ```
+
+### 9.1 reset / 재색인 검증 절차
+
+`reset_vector_db.py` 는 `data/raw` 를 절대 삭제하지 않는다. full reset 은 ChromaDB collection,
+file registry, `data/processed` 산출물, `processed/normalized/{cache,json,markdown}` 을
+초기화할 수 있다. 실제 reset 전에는 dry-run 으로 삭제 대상을 먼저 확인한다.
+
+```powershell
+# soft reset: ChromaDB collection + file registry 중심
+python scripts/reset_vector_db.py
+
+# full reset: processed 산출물과 normalized 결과물까지 초기화
+python scripts/reset_vector_db.py --mode full
+
+# dry-run: 실제 삭제 없이 대상만 확인
+python scripts/reset_vector_db.py --mode full --dry-run
+
+# full reset 이지만 normalized 결과물은 보존
+python scripts/reset_vector_db.py --mode full --keep-normalized --dry-run
+
+# 사용자 확인 없이 full reset 실행이 필요할 때만 사용
+python scripts/reset_vector_db.py --mode full --yes
+```
+
+Windows 에서 잠긴 파일이나 깨진 잔여 파일이 있으면 warning 으로 표시될 수 있다. 해당 경로가
+Git tracked 파일이 아니고 `data/raw` 하위가 아니면 개발은 계속 진행할 수 있다.
+
+검증 runbook:
+
+1. `git status --short --branch` 로 작업트리가 clean 인지 확인.
+2. `python scripts/reset_vector_db.py --mode full --dry-run` 으로 reset 대상 확인.
+3. 사용자 확인 후 `python scripts/reset_vector_db.py --mode full` 실행.
+4. Streamlit 실행:
+   ```powershell
+   $env:PYTHONPATH = (Get-Location).Path
+   python -m streamlit run app\main.py
+   ```
+5. `문서 색인` 페이지에서 `LLM 기반 문서 정규화` 를 ON 으로 켜고 재색인.
+6. `정규화 문서 관리` 페이지에서 JSON / Markdown 생성 확인.
+7. Slack Bot 실행:
+   ```powershell
+   $env:PYTHONPATH = (Get-Location).Path
+   python scripts\run_slack_bot.py
+   ```
+8. Slack `--debug` 로 QA 진단 확인.
 
 ---
 
@@ -383,6 +465,11 @@ python scripts/reset_vector_db.py           # ChromaDB / processed 초기화 (da
     `final_score` 가 계산된다.
   - `MIN_SIMILARITY_SCORE`, `MIN_FINAL_SCORE`, `MAX_CHUNKS_PER_FILE`, `USE_MMR` 로
     품질/다양성을 통제할 수 있다.
+  - **Hybrid Retrieval / BM25 는 optional 기능**이다. `HYBRID_RETRIEVAL_ENABLED=false` 가
+    기본값이며, ON 일 때 Vector Search 후보와 BM25 후보를 RRF 방식으로 병합한다.
+    약어, 캠페인명, 시트명, 매체명처럼 exact keyword 매칭이 중요한 질문을 보강하는 목적이다.
+    Slack `--debug` 와 Streamlit diagnostics 에서 `bm25_candidate_count`,
+    `hybrid_merged_candidate_count` 등 hybrid 진단값을 확인할 수 있다.
   - `MIN_RETRIEVED_CHUNKS` 미만이면 Gemini Generation 을 호출하지 않고 "근거 부족" 안내 메시지
     를 반환한다 (비용 절감).
 - 답변
@@ -393,9 +480,19 @@ python scripts/reset_vector_db.py           # ChromaDB / processed 초기화 (da
     한다 (`answer_mode=raw_fallback`).
   - 통과 chunk 자체가 부족하면 Gemini 호출 없이 "근거 부족" 메시지를 반환한다
     (`answer_mode=insufficient_evidence`).
-  - Normalized Document type, `answer_use_cases`, 질문 의도에 따라 답변 형식이
-    procedure / summary / troubleshooting / draft_message / compare /
-    history_lookup / checklist / freeform_grounded 등으로 분기된다.
+  - 질문 의도, primary Normalized Document 의 `answer_use_cases`,
+    `doc_type` / legacy `card_type` 을 바탕으로 답변 형식이 달라진다.
+    query intent 가 명확하면 이를 우선하고, 그 다음 `answer_use_cases`, 문서 타입 fallback,
+    기본 grounded 답변 순서로 선택한다.
+  - 지원 답변 포맷:
+    - `procedure`: 결론 / 처리 순서 / 단계별 설명 / 주의사항 / 체크리스트
+    - `summary`: 핵심 요약 / 현재 상황 / 주요 포인트 / 확인 필요사항
+    - `troubleshooting`: 가능한 원인 / 확인할 것 / 대응 순서 / 재발 방지 포인트
+    - `draft_message`: 바로 보낼 문안 / 부드러운 문안 / 내부 참고 메모
+    - `compare`: 비교 기준 / A안 / B안 / 추천 판단
+    - `history_lookup`: 과거 유사 케이스 / 당시 처리 방식 / 현재 적용 시 참고점
+    - `checklist`: 체크리스트 / 우선순위 / 누락 주의사항
+    - `freeform_grounded`: 답변 / 근거 / 불확실한 부분
   - 답변과 참고 근거 모두에서 사람 실명 / @멘션 / 정확한 시간 / 원본 날짜를 노출하지 않도록
     prompt 와 비식별화 가드가 작동한다.
   - legacy 환경변수 `ANSWER_WITH_KNOWLEDGE_CARDS` / `MAX_PRIMARY_CARDS` 도 fallback 으로
@@ -431,7 +528,7 @@ python -m pytest tests/test_slack_bot.py                     -v
 
 ---
 
-## Security & Privacy Notes
+## 12. Security & Privacy Notes
 
 이 저장소는 공개용 코드/설정 만 포함한다. 실제 업무 자료, 회사 / 광고주 / 매체사 / 사람 이름 /
 운영 사례 / 정산 내역 등은 어떤 형태로도 저장소에 커밋해서는 안 된다.
@@ -505,11 +602,10 @@ python -m pytest tests/test_slack_bot.py                     -v
 
 ---
 
-## 12. 현재 미지원 기능
+## 13. 현재 미지원 기능
 
 - PDF 파싱
 - 이미지 OCR
-- BM25 / Hybrid Retrieval
 - LLM 기반 reranker (cross-encoder, Gemini reranker)
 - 자동 폴더 watcher
 - 사용자 피드백 기반 평가 자동화
@@ -517,11 +613,11 @@ python -m pytest tests/test_slack_bot.py                     -v
 
 ---
 
-## 13. 향후 확장 계획
+## 14. 향후 확장 계획
 
 - PDF 파서 (`pypdf`, `pdfplumber`)
 - OCR (`pytesseract`)
-- BM25 + Vector hybrid retrieval
+- Hybrid Retrieval 튜닝 / 쿼리별 ON/OFF 정책 / 평가 자동화
 - Gemini / cross-encoder reranker
 - 임베딩 모델 A/B 테스트 자동화
 - retrieval hit rate / answer groundedness 지표화
@@ -531,7 +627,7 @@ python -m pytest tests/test_slack_bot.py                     -v
 
 ---
 
-## 14. Slack QA Bot (선택 기능)
+## 15. Slack QA Bot (선택 기능)
 
 Streamlit UI 외에 **Slack 채널에서 봇을 멘션해 질문을 던질 수 있는 사용자 인터페이스**
 를 선택적으로 제공한다. Slack Bot 은 Streamlit 을 **대체하지 않으며**, 두 인터페이스의
@@ -553,7 +649,7 @@ Slack Bot 은 자체 RAG 검색/답변 로직을 가지지 않고, 항상 기존
 ingestion / normalization / retrieval / reranking / qa 흐름은 Streamlit 과 100%
 동일하다.
 
-### 14.1 동작 흐름
+### 15.1 동작 흐름
 
 1. Slack ``app_mention`` 이벤트 수신
 2. 봇 mention (``<@U...>``) 제거
@@ -563,7 +659,7 @@ ingestion / normalization / retrieval / reranking / qa 흐름은 Streamlit 과 1
 6. 답변 / 참고 근거 (Normalized Document, Raw Evidence) / 진단 정보를 Slack 메시지로 포맷
 7. 원본 메시지 thread 에 답변 post (``SLACK_REPLY_IN_THREAD=true`` 기본값)
 
-### 14.2 필요한 Slack App 설정
+### 15.2 필요한 Slack App 설정
 
 1. <https://api.slack.com/apps> 에서 새 앱 생성 (From scratch).
 2. **Socket Mode** 활성화 (Settings → Socket Mode → On).
@@ -580,7 +676,7 @@ ingestion / normalization / retrieval / reranking / qa 흐름은 Streamlit 과 1
    ``SLACK_BOT_TOKEN`` 에 입력.
 7. 봇을 사용할 채널에 봇을 초대 (``/invite @<봇이름>``).
 
-### 14.3 환경변수 (.env.example 참고)
+### 15.3 환경변수 (.env.example 참고)
 
 | 환경변수 | 용도 | 기본값 |
 | --- | --- | --- |
@@ -596,7 +692,7 @@ ingestion / normalization / retrieval / reranking / qa 흐름은 Streamlit 과 1
 > **주의** — Slack token 은 절대 코드에 하드코딩하지 말고 ``.env`` (커밋 금지) 에서만
 > 관리한다. ``.env`` 는 ``.gitignore`` 로 차단되어 있다.
 
-### 14.4 실행 방법
+### 15.4 실행 방법
 
 ```bash
 # (.venv 활성화 상태에서)
@@ -612,7 +708,7 @@ python scripts/run_slack_bot.py
   필요 없다.
 - 종료는 Ctrl+C.
 
-### 14.5 사용 예
+### 15.5 사용 예
 
 ```
 사용자: @LF_HAZZYS_BOT 세팅 전에 확인해야 할 것 알려줘
@@ -634,13 +730,43 @@ python scripts/run_slack_bot.py
 • primary_normalized_document_count: 1
 • raw_evidence_count: 1
 • raw_fallback_count: 0
+• answer_format_label: `procedure`
 • model: `gemini-2.5-flash-lite`
 ```
 
 raw 원문은 그대로 노출되지 않는다. 모든 chunk preview 는 anonymizer / sanitizer 정책
 (``ANONYMIZE_OUTPUT`` 등) 을 통과한 결과만 사용한다.
 
-### 14.6 운영 주의사항
+### 15.6 Slack --debug 검증
+
+Slack 질문 끝에 `--debug` 를 붙이면 retrieval / reranking / 답변 포맷 진단값을 함께 확인할 수 있다.
+
+예시 질문:
+
+- `@LF_HAZZYS_BOT 메타 피드광고 셋팅 방법 알려줘 --debug`
+- `@LF_HAZZYS_BOT 메타 피드광고 관련해서 핵심만 요약해줘 --debug`
+- `@LF_HAZZYS_BOT 메타 피드광고 세팅 완료했다고 광고주에게 보낼 문안 작성해줘 --debug`
+- `@LF_HAZZYS_BOT 메타 피드광고 세팅 오류가 나면 어떤 것부터 확인해야 해? --debug`
+- `@LF_HAZZYS_BOT 과거에 메타 피드광고 관련해서 비슷한 이슈 있었어? --debug`
+
+핵심 진단값:
+
+- `content_type=normalized_document`
+- `role=primary_card`
+- `normalized_document_candidate_count` 또는 Slack 표시용 `normalized_document_candidate`
+- `primary_normalized_document_count` 또는 Slack 표시용 `primary_normalized_document`
+- `raw_fallback_only=False`
+- `answer_format_label`
+
+`query_intent` 는 retrieval / reranker 쪽 질의 해석 진단값이고, `answer_format_label` 은 Prompt
+Builder 가 실제 답변 생성에 선택한 포맷이다. 두 값은 다를 수 있다. 예를 들어 과거 사례를 묻는
+질문은 `query_intent=issue_lookup` 으로 보이더라도 실제 답변 포맷은
+`answer_format_label=history_lookup` 일 수 있다.
+
+Hybrid Retrieval 이 켜져 있으면 `bm25_candidate_count`, `hybrid_merged_candidate_count` 같은
+hybrid 진단값도 함께 확인할 수 있다.
+
+### 15.7 운영 주의사항
 
 - **동일 token 으로 여러 PC 에서 동시에 봇 프로세스를 실행하지 않는다.** Slack 측에서
   중복 Socket Mode 연결로 처리되어 메시지 누락이 발생할 수 있다.
@@ -653,7 +779,7 @@ raw 원문은 그대로 노출되지 않는다. 모든 chunk preview 는 anonymi
 - ``data/raw``, ``data/processed``, ``storage`` 는 Slack Bot 이 직접 수정하지 않는다 —
   색인 / 정규화 / 캐시는 모두 Streamlit / CLI 흐름을 통해서만 갱신한다.
 
-### 14.7 이번 MVP 에서 제외된 범위
+### 15.8 이번 MVP 에서 제외된 범위
 
 다음은 의도적으로 제외했다 (필요 시 별도 작업으로 확장).
 
@@ -666,7 +792,20 @@ raw 원문은 그대로 노출되지 않는다. 모든 chunk preview 는 anonymi
 
 ---
 
-## 라이선스 / 책임 범위
+## 16. 현재 MVP 상태 요약
+
+- Guide / Slack Thread 기반 MVP 검증 완료.
+- Normalized Document v1.5 확장 완료.
+- Prompt Builder answer format routing 완료.
+- Slack QA Bot 연결 완료.
+- Hybrid Retrieval / BM25 optional 구현 완료.
+- `reset_vector_db.py` full reset 개선 완료.
+- Streamlit page 영문 파일명 정리 완료.
+- README 기준 현재 단계는 MVP 2차 Step 6.5 마무리 단계다.
+
+---
+
+## 17. 라이선스 / 책임 범위
 
 - 본 저장소의 코드는 **연구 / 학습 / 사내 프로토타이핑** 용도로 작성되었다.
 - 실제 운영 데이터에 적용할 때는 자체 보안 / 개인정보 / NDA 정책에 따라 비식별화 옵션과

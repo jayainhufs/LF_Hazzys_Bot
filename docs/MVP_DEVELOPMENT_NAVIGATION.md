@@ -573,13 +573,35 @@ Step 6.5-6 에서 위 파일명 기준으로 변경한다.
   - 완료.
 - Step 6.5-8:
   - 전체 테스트 실행.
-  - 이후 재정규화 / 재색인 진행.
+  - full reset / 재정규화 / 재색인 / Slack QA debug 검증.
+  - 완료.
+- Step 6.5-8A:
+  - Normalized Document indexing metadata fix.
+  - Vector DB metadata 에 `content_type=normalized_document` 와 주요 정규화 문서 메타데이터가 유지되도록 수정.
+  - 완료.
+- Step 6.5-8B:
+  - `history_lookup` intent routing polish.
+  - 과거 / 이전 / 비슷한 케이스 계열 질문이 troubleshooting 보다 history lookup 포맷을 우선 사용하도록 보정.
+  - 완료.
+- Step 6.5-8C:
+  - Slack debug answer format diagnostics 추가.
+  - `query_intent` 와 별도로 실제 답변 포맷인 `answer_format_label` 을 표시.
+  - 완료.
+- Step 6.5-9:
+  - README 최종 정합성 업데이트.
+  - 현재 구현 상태, reset/reindex runbook, Slack debug 검증, legacy 명칭 정리를 README 에 반영.
+  - 완료.
 
 **현재 상태**
 
 - ✅ Step 6.5-6 Streamlit page 파일명 영문화 완료.
 - ✅ Step 6.5-7 `reset_vector_db.py` full reset 개선 완료.
-- 다음 작업은 Step 6.5-8 전체 테스트 / reset dry-run 확인 / 재정규화 및 재색인 검토다.
+- ✅ Step 6.5-8 full reset / 재정규화 / 재색인 / Slack QA debug 검증 완료.
+- ✅ Step 6.5-8A Normalized Document indexing metadata fix 완료.
+- ✅ Step 6.5-8B `history_lookup` intent routing polish 완료.
+- ✅ Step 6.5-8C Slack debug `answer_format_label` 표시 완료.
+- ✅ Step 6.5-9 README 최종 정합성 업데이트 완료.
+- 다음 작업은 README 리뷰 후 커밋 및 PR 준비다.
 
 ---
 
@@ -660,4 +682,4 @@ Step 6.5-6 에서 위 파일명 기준으로 변경한다.
 - ✅ MVP 2차 Step 5 — Slack Debug 진단 강화 완료
 - ✅ MVP 2차 Step 6 — Hybrid Retrieval / BM25 도입 완료
 - ✅ Step 6 이후 `.gitignore` local reindex backup ignore 규칙 추가 완료
-- 🔄 현재 진행 중인 Step 은 **Step 6.5 — Generalized Work Assistant 확장 설계**
+- ✅ 현재 위치는 **Step 6.5-9 — README 최종 정합성 업데이트 완료 / PR 준비 전**
