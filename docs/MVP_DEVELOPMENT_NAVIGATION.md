@@ -381,20 +381,196 @@
 
 - 약어, 캠페인명, 시트명, 매체명 등 exact keyword 검색 성능을 높인다.
 
-**예상 작업**
+**구현 내용**
 
-- BM25 index 추가
-- Vector Search 와 BM25 결과 병합
-- RRF 또는 weighted fusion 적용
-- 최종 reranking 유지
+- pure Python 기반 BM25 tokenizer / scorer 를 추가했다.
+- Hybrid Retrieval 은 optional 설정으로 도입했다.
+  - 기본값은 `HYBRID_RETRIEVAL_ENABLED=false` 로 유지한다.
+  - 기존 Vector Search 기본 흐름은 설정을 켜지 않으면 바뀌지 않는다.
+- Vector Search 후보와 BM25 후보를 RRF 방식으로 병합한다.
+- 최종 reranking / Normalized Document 우선순위 / raw fallback 정책은 유지한다.
+- hybrid retrieval diagnostics 를 추가했다.
+  - vector 후보 수, BM25 후보 수, fusion 결과, hybrid 활성화 여부를 확인할 수 있다.
+  - Slack `--debug` 와 Streamlit diagnostics 에서 hybrid 정보를 확인할 수 있다.
+- BM25 edge case hardening 을 완료했다.
+  - `top_k <= 0` 방어.
+  - case-insensitive query 처리.
+  - `Advantage+` alias 검색 보강.
+- Step 6 이후 `.gitignore` 에 local reindex backup ignore 규칙을 추가했다.
+- 검증 결과:
+  - smoke test 8/8 PASS.
+  - 전체 pytest 379 passed.
 
 **주의**
 
 - 기존 retriever / reranker 인터페이스 (`Retriever.retrieve_with_details`) 는 그대로 유지해 호출자 코드를 깨지 않는다.
+- Hybrid Retrieval 은 기본 OFF 이므로, 별도 설정 없이 기존 검색 동작을 바꾸지 않는다.
+- Step 6.5 에서는 Hybrid Retrieval / BM25 core 로직을 수정하지 않는다.
 
 **현재 상태**
 
-- 미시작.
+- ✅ 완료됨.
+
+---
+
+### Step 6.5. Generalized Work Assistant 확장 설계
+
+**목표**
+
+- 기존 Normalized Document 구조를 버리지 않고 Generalized Work Assistant 용도로 확장한다.
+- 사용자가 Gemini Gem 처럼 운영 업무 전반을 보조하는 챗봇으로 사용할 수 있게 한다.
+- 재정규화 / 재색인 전에 schema, prompt, legacy 명칭, reset 정책을 먼저 확정한다.
+
+**왜 필요한가**
+
+- 현재 QA 는 업무 절차 / 체크리스트형 답변에는 강하지만, 범용 운영 업무 Assistant 로는 제한이 있다.
+- 기존 Normalized Document 타입은 `workflow`, `checklist`, `issue`, `faq`, `decision`,
+  `communication_template`, `glossary` 중심이다.
+- 이 구조만으로는 요약, 상황 정리, 문안 작성, 이슈 분석, 히스토리 조회, 비교 판단을 충분히 표현하기 어렵다.
+- 따라서 기존 구조와 호환성을 유지하면서 Normalized Document v1.5 로 확장한다.
+
+**Step 6.5 원칙**
+
+- 기존 Normalized Document 구조를 유지한다.
+- 기존 legacy Knowledge Card alias 호환을 유지한다.
+- 신규 `doc_type` 후보를 설계한다.
+- `answer_use_cases` 를 설계한다.
+- Prompt Builder 의 답변 포맷 라우팅을 확장한다.
+- 사용자-facing 명칭은 Knowledge Card / 지식카드가 아니라 Normalized Document / 정규화 문서로 통일한다.
+- Streamlit page 한글 파일명 및 legacy 페이지명 정리 방안을 검토한다.
+- `reset_vector_db.py` full reset 개선 방안을 설계한다.
+- 이후 재정규화 / 재색인 전에 구조를 확정한다.
+
+**Normalized Document v1.5 doc_type 후보**
+
+기존 유지:
+
+- `workflow`
+- `checklist`
+- `issue`
+- `faq`
+- `decision`
+- `communication_template`
+- `glossary`
+
+추가 후보:
+
+- `context_note`
+- `status_update`
+- `action_item`
+- `issue_log`
+- `decision_log`
+- `campaign_summary`
+- `communication_history`
+- `reference_note`
+- `report_insight`
+
+**answer_use_cases 후보**
+
+- `procedure`
+- `summary`
+- `troubleshooting`
+- `draft_message`
+- `compare`
+- `history_lookup`
+- `checklist`
+- `freeform_grounded`
+
+**Prompt Builder 답변 라우팅 설계 방향**
+
+- `procedure`: 결론 / 처리 순서 / 단계별 설명 / 주의사항 / 체크리스트
+- `summary`: 핵심 요약 / 현재 상황 / 주요 포인트 / 확인 필요사항
+- `troubleshooting`: 가능한 원인 / 확인할 것 / 대응 순서 / 재발 방지 포인트
+- `draft_message`: 바로 보낼 문안 / 부드러운 문안 / 내부 참고 메모
+- `compare`: 비교 기준 / A안 / B안 / 추천 판단
+- `history_lookup`: 과거 유사 케이스 / 당시 처리 방식 / 현재 참고점
+- `freeform_grounded`: 자료 기반 자유 답변 / 근거 / 불확실한 부분
+
+**Legacy 명칭 정리 방향**
+
+- 사용자-facing 문구는 Normalized Document / 정규화 문서로 통일한다.
+- Knowledge Card / 지식카드 표현은 UI 와 문서에서 단계적으로 제거한다.
+- 코드 내부 legacy alias, `test_knowledge_card_*` 파일명, `answer_mode="knowledge_card"` 는
+  당장 제거하지 않고 호환 레이어로 유지한다.
+- `app/pages/7_지식카드_관리.py` 는 향후 `7_normalized_document_management.py` 로 변경 검토한다.
+- 파일명 변경은 별도 Step / 별도 커밋으로 분리한다.
+
+**Streamlit page 파일명 정리 방향**
+
+현재 일부 Streamlit page 파일명이 한글 기반이라 Windows / Git / Codex 작업에서 상태 표시가 혼란스러울 수 있다.
+향후 별도 단계에서 아래 영문 파일명으로 변경을 검토한다.
+
+- `1_document_upload.py`
+- `2_document_indexing.py`
+- `3_work_qa.py`
+- `4_search_test.py`
+- `5_api_status.py`
+- `6_excel_summary.py`
+- `7_normalized_document_management.py`
+
+단, Step 6.5-1 에서는 파일명 변경을 하지 않고 계획만 기록한다.
+
+**reset_vector_db.py 개선 방향**
+
+현재 `reset_vector_db.py` 는 partial reset 에 가깝다. 향후 아래 대상을 포함하는 full reset 개선을 검토한다.
+
+- ChromaDB 초기화.
+- file registry 초기화.
+- `processed/chunks` 초기화.
+- `processed/documents` 초기화.
+- `processed/summaries` 초기화.
+- `processed/normalized/cache` 초기화.
+- `processed/normalized/json` 초기화.
+- `processed/normalized/markdown` 초기화.
+- `data/raw` 는 절대 삭제하지 않는다.
+- `--soft` / `--full` 모드 분리를 검토한다.
+- `--keep-normalized` 옵션을 검토한다.
+- Windows 에서 `data/processed/MP7AUH.DOCX` 같은 깨진 잔여 파일이 생긴 경우,
+  경고를 남기고 계속 진행하는 방향을 검토한다.
+
+**현재 알려진 로컬 이슈**
+
+- reset 후 `data/processed/MP7AUH.DOCX` 잔여 파일 1개가 Windows 파일시스템 문제로 삭제되지 않는 상태가 관찰됨.
+- Git 에는 잡히지 않고 raw 원본도 아니므로 현재 개발은 계속 진행한다.
+- `reset_vector_db.py` 개선 시 이 케이스를 고려한다.
+
+**Step 6.5 실행 계획**
+
+- Step 6.5-0:
+  - 현재 구조 분석 및 설계 점검 완료.
+  - 코드 수정 없음.
+- Step 6.5-1:
+  - `MVP_DEVELOPMENT_NAVIGATION.md` 갱신.
+  - 현재 단계와 Step 6.5 목표 반영.
+- Step 6.5-2:
+  - Normalized Document schema 확장.
+  - `doc_type` / `answer_use_cases` 필드 설계 및 테스트 추가.
+  - legacy Knowledge Card 호환 유지.
+- Step 6.5-3:
+  - Guide / Slack normalizer prompt 확장.
+  - 신규 `doc_type` 과 `answer_use_cases` 생성 가능하게 변경.
+- Step 6.5-4:
+  - Prompt Builder 답변 포맷 라우팅 확장.
+  - `procedure` / `summary` / `troubleshooting` / `draft_message` / `compare` /
+    `history_lookup` / `freeform_grounded` 대응.
+- Step 6.5-5:
+  - 사용자-facing legacy 명칭 정리.
+  - Knowledge Card / 지식카드 → Normalized Document / 정규화 문서.
+  - UI 텍스트와 README 중심으로 정리.
+- Step 6.5-6:
+  - Streamlit page 파일명 영문화 검토 및 필요 시 최소 단위로 변경.
+  - 실제 rename 은 별도 커밋으로 분리.
+- Step 6.5-7:
+  - `reset_vector_db.py` full reset 개선.
+  - normalized 결과물까지 초기화 가능하게 개선.
+  - raw 데이터 보호 검증 추가.
+- Step 6.5-8:
+  - 전체 테스트 실행.
+  - 이후 재정규화 / 재색인 진행.
+
+**현재 상태**
+
+- 🔄 진행 중.
 
 ---
 
@@ -468,8 +644,11 @@
 - ✅ Slack QA Bot 연결 완료
 - ✅ Slack 기본 출력 간결화 완료
 - ✅ MVP 2차 Step 1 — Retrieval Diagnostics 강화 완료
+- ✅ MVP 2차 Step 1.5 — Development Navigation 문서 추가 완료
 - ✅ MVP 2차 Step 2 — Topic-aware Retrieval / Penalty 강화 완료
 - ✅ MVP 2차 Step 3 — Normalized Document 우선순위 점검 완료
 - ✅ MVP 2차 Step 4 — Raw Fallback 오남용 방지 완료
 - ✅ MVP 2차 Step 5 — Slack Debug 진단 강화 완료
-- ⏭️ 다음 예정 Step 은 **Step 6 — Hybrid Retrieval / BM25 도입**
+- ✅ MVP 2차 Step 6 — Hybrid Retrieval / BM25 도입 완료
+- ✅ Step 6 이후 `.gitignore` local reindex backup ignore 규칙 추가 완료
+- 🔄 현재 진행 중인 Step 은 **Step 6.5 — Generalized Work Assistant 확장 설계**
