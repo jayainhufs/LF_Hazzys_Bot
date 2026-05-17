@@ -32,8 +32,8 @@ from __future__ import annotations
 from typing import List, Optional, Tuple
 
 
-GUIDE_NORMALIZER_PROMPT_VERSION = "guide_v1"
-SLACK_NORMALIZER_PROMPT_VERSION = "slack_thread_v1"
+GUIDE_NORMALIZER_PROMPT_VERSION = "guide_v1_5"
+SLACK_NORMALIZER_PROMPT_VERSION = "slack_thread_v1_5"
 
 
 GUIDE_SYSTEM_INSTRUCTION = """너는 광고대행사 퍼포먼스 마케팅 업무 가이드를 구조화하는 사내 지식 정리 에이전트다.
@@ -55,6 +55,29 @@ GUIDE_SYSTEM_INSTRUCTION = """너는 광고대행사 퍼포먼스 마케팅 업�
 - 광고주 / 매체 공유 메일·노티 문안이면 card_type=communication_template
 - 운영 판단·선택·방향 결정 사례면 card_type=decision
 - 위 어디에도 안 맞는 문제 / 장애 사례는 card_type=issue
+- 업무 배경, 캠페인 맥락, 운영 기준, 참고 상황이면 card_type=context_note
+- 특정 날짜/문서 기준 진행 상태, 완료/대기/보류 상태면 card_type=status_update
+- 해야 할 일, 후속 조치, 확인 필요 작업이면 card_type=action_item
+- 이슈 발생, 원인, 대응, 결과 흐름이면 card_type=issue_log
+- 결정 배경, 선택지, 결정 이유, 결정 이력이 핵심이면 card_type=decision_log
+- 캠페인 목적, 매체, 광고상품, 세팅 현황 요약이면 card_type=campaign_summary
+- 광고주/매체사/내부 커뮤니케이션 흐름이면 card_type=communication_history
+- 단순 참고사항, 운영 기준, 링크성 지식, 기준표이면 card_type=reference_note
+- 리포트/성과 데이터 해석, 주요 인사이트이면 card_type=report_insight
+
+Guide 문서에 특히 잘 맞는 card_type:
+- workflow, checklist, faq, glossary, reference_note, communication_template
+- 캠페인 설명이나 운영 맥락이 있으면 campaign_summary, context_note 도 사용할 수 있다.
+
+answer_use_cases 후보:
+- procedure: 절차/방법 질문에 사용
+- summary: 요약/상황 정리 질문에 사용
+- troubleshooting: 문제 원인/대응 질문에 사용
+- draft_message: 광고주/내부 공유문 작성에 사용
+- compare: 선택지 비교/판단에 사용
+- history_lookup: 과거 유사 사례 조회에 사용
+- checklist: 점검 리스트 생성에 사용
+- freeform_grounded: 자료 기반 자유 답변에 사용
 
 토픽 태그 후보 (primary_topic / topic_tags):
 meta, kakao, settlement, outdoor, report, nbt, greenp, youtube, common, unknown
@@ -72,9 +95,10 @@ JSON schema (반드시 이 형태로만 응답):
 {
   "cards": [
     {
-      "card_type": "workflow|issue|checklist|faq|decision|glossary|communication_template",
+      "card_type": "workflow|issue|checklist|faq|decision|glossary|communication_template|context_note|status_update|action_item|issue_log|decision_log|campaign_summary|communication_history|reference_note|report_insight",
       "title": "...",
       "summary": "...",
+      "answer_use_cases": ["procedure|summary|troubleshooting|draft_message|compare|history_lookup|checklist|freeform_grounded"],
       "primary_topic": "meta|kakao|settlement|outdoor|report|nbt|greenp|youtube|common|unknown",
       "topic_tags": ["..."],
       "task_type": "setup|settlement|report|check|communication|analysis|unknown",
@@ -180,6 +204,30 @@ Slack Thread 의 위치:
 - 광고주 / 매체 / 내부 공유용 메일·노티 문안 → card_type=communication_template
 - 반복 가능한 절차가 명확하게 도출됐을 때만 → card_type=workflow
 - 용어 / 약어 정의가 스레드에 등장하면 → card_type=glossary
+- 특정 날짜/스레드 기준 진행 상태, 완료/대기/보류 상태 → card_type=status_update
+- 해야 할 일, 후속 조치, 확인 필요 작업 → card_type=action_item
+- 이슈 발생, 원인, 대응, 결과 흐름 → card_type=issue_log
+- 결정 배경, 선택지, 결정 이유, 결정 이력 → card_type=decision_log
+- 광고주/매체사/내부 커뮤니케이션 흐름 → card_type=communication_history
+- 업무 배경, 캠페인 맥락, 운영 기준, 참고 상황 → card_type=context_note
+- 캠페인 목적, 매체, 광고상품, 세팅 현황 요약 → card_type=campaign_summary
+- 단순 참고사항, 운영 기준, 링크성 지식, 기준표 → card_type=reference_note
+- 리포트/성과 데이터 해석, 주요 인사이트 → card_type=report_insight
+
+Slack Thread 에 특히 잘 맞는 card_type:
+- status_update, action_item, issue_log, decision_log, communication_history
+- 업무 절차가 명확하면 workflow, checklist 도 사용할 수 있다.
+- 광고주 공유문이나 회신 문안이 있으면 communication_template 을 사용한다.
+
+answer_use_cases 후보:
+- procedure: 절차/방법 질문에 사용
+- summary: 요약/상황 정리 질문에 사용
+- troubleshooting: 문제 원인/대응 질문에 사용
+- draft_message: 광고주/내부 공유문 작성에 사용
+- compare: 선택지 비교/판단에 사용
+- history_lookup: 과거 유사 사례 조회에 사용
+- checklist: 점검 리스트 생성에 사용
+- freeform_grounded: 자료 기반 자유 답변에 사용
 
 토픽 태그 후보 (primary_topic / topic_tags):
 meta, kakao, settlement, outdoor, report, nbt, greenp, youtube, common, unknown
@@ -198,9 +246,10 @@ JSON schema (반드시 이 형태로만 응답):
 {
   "cards": [
     {
-      "card_type": "workflow|issue|checklist|faq|decision|glossary|communication_template",
+      "card_type": "workflow|issue|checklist|faq|decision|glossary|communication_template|context_note|status_update|action_item|issue_log|decision_log|campaign_summary|communication_history|reference_note|report_insight",
       "title": "...",
       "summary": "...",
+      "answer_use_cases": ["procedure|summary|troubleshooting|draft_message|compare|history_lookup|checklist|freeform_grounded"],
       "primary_topic": "meta|kakao|settlement|outdoor|report|nbt|greenp|youtube|common|unknown",
       "topic_tags": ["..."],
       "task_type": "setup|settlement|report|check|communication|analysis|unknown",

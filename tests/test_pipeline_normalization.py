@@ -218,6 +218,7 @@ GUIDE_RESPONSE_JSON = json.dumps(
                 "card_type": "workflow",
                 "title": "메타 캠페인 셋업",
                 "summary": "메타 캠페인을 신규 셋업할 때의 절차.",
+                "answer_use_cases": ["procedure", "checklist"],
                 "primary_topic": "meta",
                 "topic_tags": ["meta", "setup"],
                 "task_type": "setup",
@@ -250,6 +251,7 @@ SLACK_RESPONSE_JSON = json.dumps(
                 "card_type": "issue",
                 "title": "정산서 단위 누락 처리",
                 "summary": "원/USD 단위 누락 사례와 처리.",
+                "answer_use_cases": ["troubleshooting", "history_lookup"],
                 "primary_topic": "settlement",
                 "topic_tags": ["settlement", "issue"],
                 "task_type": "settlement",
@@ -757,6 +759,7 @@ class TestRunNormalizationBranchHappyPath:
         assert norm_chunk.metadata["source_weight"] == pytest.approx(1.25)
         assert norm_chunk.metadata["normalized"] is True
         assert norm_chunk.metadata["parent_raw_chunk_ids"]
+        assert "- answer_use_cases: procedure, checklist" in norm_chunk.content
 
         # cache hit 검증: 동일 입력으로 한 번 더 호출하면 LLM 호출 없음
         result2 = run_normalization_branch(
@@ -833,6 +836,7 @@ class TestRunNormalizationBranchHappyPath:
         assert "issue" in norm_chunk.metadata["topic_tags"]
         assert norm_chunk.metadata["document_date"] == "2026-04-29"
         assert norm_chunk.metadata["display_date"] == "해당 업무일"
+        assert "- answer_use_cases: troubleshooting, history_lookup" in norm_chunk.content
 
         # parent links are connected to raw chunks
         parent_ids = norm_chunk.metadata["parent_raw_chunk_ids"]

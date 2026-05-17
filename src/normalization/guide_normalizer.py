@@ -413,6 +413,7 @@ class GuideDocumentNormalizer:
                 open_questions=_as_str_list(raw.get("open_questions")),
                 evidence_spans=_normalize_evidence_spans(raw.get("evidence_spans")),
                 parent_raw_chunk_ids=[],
+                answer_use_cases=_as_str_list(raw.get("answer_use_cases")),
                 sanitized_markdown="",
                 metadata=dict(base_metadata),
             )
