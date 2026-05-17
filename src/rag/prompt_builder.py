@@ -751,12 +751,25 @@ def _detect_answer_intent(question: str) -> Optional[str]:
         return None
     if any(k in q for k in ("문안", "보낼 말", "메일", "슬랙", "공유문", "회신", "광고주에게")):
         return "draft_message"
+    if any(
+        k in q
+        for k in (
+            "예전에",
+            "과거",
+            "이전",
+            "전에",
+            "히스토리",
+            "비슷한 케이스",
+            "유사 사례",
+            "사례 있었",
+            "비슷한 이슈",
+        )
+    ):
+        return "history_lookup"
     if any(k in q for k in ("오류", "문제", "이슈", "안돼", "안 돼", "실패", "원인", "대응")):
         return "troubleshooting"
     if any(k in q for k in ("비교", "차이", "a안", "b안", "뭐가 나아", "추천")):
         return "compare"
-    if any(k in q for k in ("예전에", "과거", "이전", "전에", "히스토리", "비슷한 케이스")):
-        return "history_lookup"
     if any(k in q for k in ("체크리스트", "확인할 것", "점검", "누락")):
         return "checklist"
     if any(k in q for k in ("요약", "정리", "핵심", "현재 상황", "한눈에")):

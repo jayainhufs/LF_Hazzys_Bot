@@ -337,6 +337,31 @@ def test_select_answer_format_history_lookup_for_history_question():
     assert fmt == HISTORY_LOOKUP_ANSWER_FORMAT
 
 
+def test_select_answer_format_history_lookup_overrides_issue_keyword():
+    cards = [_make_kc_chunk(chunk_id="kc1", file_name="h.txt", card_type="issue_log")]
+    fmt, label = select_answer_format(
+        cards, "과거에 메타 피드광고 관련해서 비슷한 이슈 있었어?"
+    )
+    assert label == "history_lookup"
+    assert fmt == HISTORY_LOOKUP_ANSWER_FORMAT
+
+
+def test_select_answer_format_history_lookup_for_similar_case_question():
+    cards = [_make_kc_chunk(chunk_id="kc1", file_name="h.txt", card_type="issue_log")]
+    fmt, label = select_answer_format(cards, "전에 비슷한 케이스 있었어?")
+    assert label == "history_lookup"
+    assert fmt == HISTORY_LOOKUP_ANSWER_FORMAT
+
+
+def test_select_answer_format_troubleshooting_still_handles_current_error_question():
+    cards = [_make_kc_chunk(chunk_id="kc1", file_name="i.txt", card_type="issue_log")]
+    fmt, label = select_answer_format(
+        cards, "메타 피드광고 세팅 오류가 나면 어떤 것부터 확인해야 해?"
+    )
+    assert label == "troubleshooting"
+    assert fmt == TROUBLESHOOTING_ANSWER_FORMAT
+
+
 def test_select_answer_format_uses_answer_use_cases_when_query_intent_unclear():
     cards = [
         _make_kc_chunk(
