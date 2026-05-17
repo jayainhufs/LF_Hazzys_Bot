@@ -123,7 +123,7 @@ src/
   utils/                # path / hash / time / encoding / token / cost
 app/
   main.py               # Streamlit 홈
-  pages/                # 1_문서_업로드 ~ 7_정규화_문서_관리
+  pages/                # 1_document_upload.py ~ 7_normalized_document_management.py
   components/           # UI helper
 ```
 
@@ -226,7 +226,7 @@ LLM-based Document Normalization MVP 는 7 단계로 구현되어 있다 (모두
 | 2 | Guide document normalizer (LLM 호출 + cache) | `src/normalization/guide_normalizer.py` (`GuideDocumentNormalizer`), `normalization_prompt.py` |
 | 3 | Slack-style 스레드 document normalizer (LLM 호출 + cache) | `src/normalization/slack_normalizer.py` (`SlackThreadDocumentNormalizer`), `normalization_prompt.py` |
 | 4 | `ENABLE_LLM_NORMALIZATION` 옵션을 ingest pipeline 에 연결 | `src/normalization/pipeline_integration.py`, `src/pipeline.py` |
-| 5 | Streamlit 정규화 문서 관리 UI (read-only) | 정규화 문서 관리 페이지 (현재 파일명은 legacy 한글명 유지), `src/normalization/card_viewer.py` |
+| 5 | Streamlit 정규화 문서 관리 UI (read-only) | `app/pages/7_normalized_document_management.py`, `src/normalization/card_viewer.py` |
 | 6 | 검색 단계 Normalized Document 우선 retrieval / reranker | `src/rag/reranker.py` (`apply_normalized_document_priority`), `src/rag/retriever.py` |
 | 7 | QA prompt 가 Normalized Document 를 1차 근거로 사용 | `src/rag/prompt_builder.py` (`build_normalized_document_answer_prompt`), `src/rag/qa_pipeline.py` |
 
@@ -350,13 +350,13 @@ Windows 추가 주의사항
 
 | 페이지 (UI 표시명) | 역할 |
 | --- | --- |
-| `1_문서_업로드` (문서 업로드) | 카테고리 선택 후 파일 업로드 → `data/raw/<카테고리>/` 에 저장 |
-| `2_문서_색인` (문서 색인) | 새 파일 색인 / Excel 한국어 요약 옵션 / LLM 기반 문서 정규화 결과 카운트 표시 |
-| `3_업무_QA` (업무 QA) | 질문 → 검색 → 답변. `answer_mode`, primary Normalized Document 목록, retrieval_role 진단 표시 |
-| `4_검색_테스트` (검색 테스트) | 답변 생성 없이 retrieval 결과만 확인. content_type / normalized_document_type 필터 제공 |
-| `5_API_상태확인` (API 상태 확인) | Gemini API Key / 모델 사용 가능 여부 점검 |
-| `6_Excel_요약관리` (Excel 요약 관리) | Excel 시트별 한국어 업무 요약 재생성 / 캐시 확인 |
-| 정규화 문서 관리 | 생성된 Normalized Document JSON / Markdown 을 read-only 로 확인. 현재 파일명은 한글 경로 호환을 위해 legacy 이름을 유지하되, UI 표시명은 "정규화 문서 관리" 로 통일되어 있다 |
+| `1_document_upload.py` (문서 업로드) | 카테고리 선택 후 파일 업로드 → `data/raw/<카테고리>/` 에 저장 |
+| `2_document_indexing.py` (문서 색인) | 새 파일 색인 / Excel 한국어 요약 옵션 / LLM 기반 문서 정규화 결과 카운트 표시 |
+| `3_work_qa.py` (업무 QA) | 질문 → 검색 → 답변. `answer_mode`, primary Normalized Document 목록, retrieval_role 진단 표시 |
+| `4_search_test.py` (검색 테스트) | 답변 생성 없이 retrieval 결과만 확인. content_type / normalized_document_type 필터 제공 |
+| `5_api_status.py` (API 상태 확인) | Gemini API Key / 모델 사용 가능 여부 점검 |
+| `6_excel_summary.py` (Excel 요약 관리) | Excel 시트별 한국어 업무 요약 재생성 / 캐시 확인 |
+| `7_normalized_document_management.py` (정규화 문서 관리) | 생성된 Normalized Document JSON / Markdown 을 read-only 로 확인 |
 
 CLI 도 함께 제공한다.
 
@@ -459,8 +459,8 @@ python -m pytest tests/test_slack_bot.py                     -v
 | LLM-based Document Normalization ON | 정제된 문서 본문 + 메타데이터 | Normalized Document 생성 |
 | 업무 QA 답변 시 | 사용자 질문 + 검색된 chunk 컨텍스트 | 답변 생성 |
 | Query rewrite ON (기본 OFF) | 사용자 질문 | 검색 친화적 재작성 |
-| `4_검색_테스트` 페이지 | 질문 임베딩 1회 (`gemini` provider 한정) | 답변 생성 호출 없음 |
-| `5_API_상태확인` 페이지 | 사용자가 버튼을 눌렀을 때만 ping | 페이지 조회만으로는 무전송 |
+| `4_search_test.py` 페이지 | 질문 임베딩 1회 (`gemini` provider 한정) | 답변 생성 호출 없음 |
+| `5_api_status.py` 페이지 | 사용자가 버튼을 눌렀을 때만 ping | 페이지 조회만으로는 무전송 |
 
 > 외부 전송이 가장 적은 운영 모드 = `EMBEDDING_PROVIDER=local` + `ENABLE_LLM_NORMALIZATION=
 > false` + `ENABLE_QUERY_REWRITE=false` + Excel 요약 비활성화. 이 경우 외부 호출은 사용자가

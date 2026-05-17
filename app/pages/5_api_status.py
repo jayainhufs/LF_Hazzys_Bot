@@ -1,6 +1,6 @@
 """
-5_API_상태확인.py
-================
+5_api_status.py
+===============
 Gemini API 연결 / Embedding / Generation / 모델 목록 진단 페이지.
 
 이 페이지는 사용자가 버튼을 눌렀을 때만 외부 API 를 호출한다.

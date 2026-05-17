@@ -1,5 +1,5 @@
 """
-4_검색_테스트.py
+4_search_test.py
 ================
 LLM generation 호출 없이 retrieval 결과만 확인.
 임베딩 모델/카테고리 필터/top_k/threshold 조합으로 검색 품질을 검증한다.

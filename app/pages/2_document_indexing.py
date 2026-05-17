@@ -1,6 +1,6 @@
 """
-2_문서_색인.py
-==============
+2_document_indexing.py
+======================
 data/raw/<카테고리>/ 폴더를 스캔하여 새 파일만 색인한다.
 - 이미 색인된 파일은 file_hash 기준으로 skip
 - Excel 상세 요약(LLM) 생성 옵션 제공
@@ -76,7 +76,7 @@ files = discover_files()
 st.write(f"스캔 결과: 총 **{len(files)}** 개 파일")
 with st.expander("대상 파일 목록", expanded=False):
     if not files:
-        st.caption("data/raw/* 에 파일이 없습니다. '1_문서_업로드' 페이지에서 먼저 업로드하세요.")
+        st.caption("data/raw/* 에 파일이 없습니다. '문서 업로드' 페이지에서 먼저 업로드하세요.")
     else:
         for item in files:
             p = item["path"]

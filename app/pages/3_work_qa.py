@@ -1,6 +1,6 @@
 """
-3_업무_QA.py
-=============
+3_work_qa.py
+============
 업무 질문 → Gemini 답변.
 - 카테고리 필터 / top_k / query rewrite 옵션 제공
 - 근거 chunk 를 expander 로 표시 (final_score / passed_threshold 포함)
@@ -67,7 +67,7 @@ if run:
     if not settings.has_api_key():
         st.error(
             "GOOGLE_API_KEY 가 설정되어 있지 않습니다. `.env` 를 확인하세요. "
-            "(검색만 확인하려면 '4_검색_테스트' 페이지를 사용하세요.)"
+            "(검색만 확인하려면 '검색 테스트' 페이지를 사용하세요.)"
         )
         st.stop()
 

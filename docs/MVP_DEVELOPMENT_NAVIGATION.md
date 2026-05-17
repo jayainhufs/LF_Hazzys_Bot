@@ -287,7 +287,7 @@
   - 기본 출력은 변경하지 않는다.
 - Slack adapter (``src/slack_bot/qa_adapter.py``) 가 신규 진단을 diagnostics
   dict 에 그대로 전달한다.
-- Streamlit ``app/pages/3_업무_QA.py`` caption 에 ``evidence_strength`` /
+- Streamlit ``app/pages/3_work_qa.py`` caption 에 ``evidence_strength`` /
   ``raw_fallback_only`` / mismatch count / ratio / weak_evidence_warning 표시.
   - weak_evidence_warning=True 일 때 ``st.warning`` 으로 약한 근거 안내 노출.
 - ``tests/test_raw_fallback_policy.py`` 신규 추가.
@@ -492,7 +492,7 @@
 - Knowledge Card / 지식카드 표현은 UI 와 문서에서 단계적으로 제거한다.
 - 코드 내부 legacy alias, `test_knowledge_card_*` 파일명, `answer_mode="knowledge_card"` 는
   당장 제거하지 않고 호환 레이어로 유지한다.
-- `app/pages/7_지식카드_관리.py` 는 향후 `7_normalized_document_management.py` 로 변경 검토한다.
+- `app/pages/7_normalized_document_management.py` 로 파일명 영문화한다.
 - 파일명 변경은 별도 Step / 별도 커밋으로 분리한다.
 
 **Streamlit page 파일명 정리 방향**
@@ -508,7 +508,7 @@
 - `6_excel_summary.py`
 - `7_normalized_document_management.py`
 
-단, Step 6.5-5 까지는 파일명 변경을 하지 않고 계획만 기록한다.
+Step 6.5-6 에서 위 파일명 기준으로 변경한다.
 
 **reset_vector_db.py 개선 방향**
 
@@ -565,6 +565,7 @@
 - Step 6.5-6:
   - Streamlit page 파일명 영문화 검토 및 필요 시 최소 단위로 변경.
   - 실제 rename 은 별도 커밋으로 분리.
+  - 완료.
 - Step 6.5-7:
   - `reset_vector_db.py` full reset 개선.
   - normalized 결과물까지 초기화 가능하게 개선.
@@ -575,8 +576,8 @@
 
 **현재 상태**
 
-- ✅ Step 6.5-5 사용자-facing legacy 명칭 정리 완료.
-- 다음 작업은 Step 6.5-6 Streamlit page 파일명 영문화 검토다.
+- ✅ Step 6.5-6 Streamlit page 파일명 영문화 완료.
+- 다음 작업은 Step 6.5-7 `reset_vector_db.py` full reset 개선이다.
 
 ---
 

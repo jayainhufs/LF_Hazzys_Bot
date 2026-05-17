@@ -1,10 +1,10 @@
 """
-7_지식카드_관리.py
-==================
+7_normalized_document_management.py
+===================================
 LLM-based Document Normalization 으로 생성된 Normalized Document 를 확인하는
 read-only 관리 페이지.
 
-(파일명은 기존 한글 경로 호환을 위해 유지하되, UI 표시명은 "정규화 문서 관리" 로 변경했다.)
+(UI 표시명은 "정규화 문서 관리" 로 유지한다.)
 
 주의:
 - raw 원문은 표시하지 않는다.
