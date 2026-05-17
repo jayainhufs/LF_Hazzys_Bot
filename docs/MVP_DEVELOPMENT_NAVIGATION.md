@@ -570,6 +570,7 @@ Step 6.5-6 에서 위 파일명 기준으로 변경한다.
   - `reset_vector_db.py` full reset 개선.
   - normalized 결과물까지 초기화 가능하게 개선.
   - raw 데이터 보호 검증 추가.
+  - 완료.
 - Step 6.5-8:
   - 전체 테스트 실행.
   - 이후 재정규화 / 재색인 진행.
@@ -577,7 +578,8 @@ Step 6.5-6 에서 위 파일명 기준으로 변경한다.
 **현재 상태**
 
 - ✅ Step 6.5-6 Streamlit page 파일명 영문화 완료.
-- 다음 작업은 Step 6.5-7 `reset_vector_db.py` full reset 개선이다.
+- ✅ Step 6.5-7 `reset_vector_db.py` full reset 개선 완료.
+- 다음 작업은 Step 6.5-8 전체 테스트 / reset dry-run 확인 / 재정규화 및 재색인 검토다.
 
 ---
 
